@@ -1,0 +1,49 @@
+#pragma kernel CS_JPEG_Greyscale
+#pragma kernel CS_JPEG_420
+#pragma kernel CS_JPEG_444
+
+#pragma require wavebasic //: HAS_WAVE_INTRINSICS // could add alternate path for platforms without intrinsics
+
+#include "Includes/JpegUtils.hlsl"
+
+RWTexture2D<float4> _Result;
+uint dispatchWidth;
+
+[numthreads(32,1,1)]
+void CS_JPEG_Greyscale (uint3 id : SV_GroupThreadID, uint3 groupID : SV_GroupID)
+{
+    JpegHeader jpegInfo = jpegHeader[0];
+    
+    // prevent decoding more MCUs than exist
+    uint mcuIndex = groupID.x + groupID.y * dispatchWidth;
+    if (mcuIndex >= jpegInfo.numMCUs)
+        return;
+
+    DecodeMCU_BW(id.x, mcuIndex, jpegInfo, _Result);
+}
+
+[numthreads(32,1,1)]
+void CS_JPEG_420 (uint3 id : SV_GroupThreadID, uint3 groupID : SV_GroupID)
+{
+    JpegHeader jpegInfo = jpegHeader[0];
+    
+    // prevent decoding more MCUs than exist
+    uint mcuIndex = groupID.x + groupID.y * dispatchWidth;
+    if (mcuIndex >= jpegInfo.numMCUs)
+        return;
+
+    DecodeMCU_420(id.x, mcuIndex, jpegInfo, _Result);
+}
+
+[numthreads(32,1,1)]
+void CS_JPEG_444 (uint3 id : SV_GroupThreadID, uint3 groupID : SV_GroupID)
+{
+    JpegHeader jpegInfo = jpegHeader[0];
+    
+    // prevent decoding more MCUs than exist
+    uint mcuIndex = groupID.x + groupID.y * dispatchWidth;
+    if (mcuIndex >= jpegInfo.numMCUs)
+        return;
+
+    DecodeMCU_444(id.x, mcuIndex, jpegInfo, _Result);
+}
