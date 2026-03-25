@@ -4,7 +4,7 @@
 #include "JpegHeader.cs.hlsl"
 #include "BitStream.hlsl"
 
-#define ZRL 0
+#define EOB 0
 
 ByteAddressBuffer jpegData;
 
@@ -32,27 +32,29 @@ float3 RgbToYCbCr(float3 rgb)
     return float3(Y, Cb, Cr);
 }
 
-float3 YCbCrToRgb(float3 yCbCr)
+float3 YCbCrToRgb_LvlShift(float3 yCbCr)
 {
-    float Y  = yCbCr.r;
-    float Cb = yCbCr.g - 0.5;
-    float Cr = yCbCr.b - 0.5;
+    float Y  = yCbCr.r * (1. / 255.) + 0.5;
+    float Cb = yCbCr.g * (1. / 255.) + 0.0;
+    float Cr = yCbCr.b * (1. / 255.) + 0.0;
 
-    float r = Y + 1.402f * Cr;
-    float g = Y - 0.344136f * Cb - 0.714136f * Cr;
-    float b = Y + 1.772f * Cb;
+    float r = Y + Cr * +1.402f;
+    float g = Y + Cb * -0.344136f + Cr * -0.714136f;
+    float b = Y + Cb * +1.772f;
         
     return float3(r, g, b);
 }
 
-void YCbCrToRgb(float2 luminance, float2 CbCr, out float3 rgb1, out float3 rgb2)
+void YCbCrToRgb_LvlShift(float2 luminance, float2 CbCr, out float3 rgb1, out float3 rgb2)
 {
-    float Cb = CbCr[0] - 0.5;
-    float Cr = CbCr[1] - 0.5;
+    luminance *= 1. / 255.;
+    
+    float Cb = CbCr[0];
+    float Cr = CbCr[1];
 
-    float r = + 1.402f * Cr;
-    float g = - 0.344136f * Cb - 0.714136f * Cr;
-    float b = + 1.772f * Cb;
+    float r = 0.5 + Cr * (+1.402 / 255.);
+    float g = 0.5 + Cb * (-0.344136 / 255.) + Cr * (-0.714136f / 255.) ;
+    float b = 0.5 + Cb * (+1.772 / 255.);
 
     rgb1 = luminance.x + float3(r, g, b);
     rgb2 = luminance.y + float3(r, g, b);
@@ -238,7 +240,7 @@ uint DecodeDC(uint warpID, HuffmanTableDC hfTable, uint nextBits32, out uint dec
         return codeLength;
     }
 
-    decodedSymbol = ZRL;
+    decodedSymbol = EOB;
     return 0;
 }
 
@@ -270,7 +272,7 @@ uint DecodeAC(uint warpID, HuffmanTableAC hfTable, uint nextBits32, out uint dec
     }
     
     // no match was found, end the block with all zeros
-    decodedSymbol = ZRL;
+    decodedSymbol = EOB;
     return 0;
 }
 
@@ -309,7 +311,7 @@ void DecodeBlock(uint warpID, inout BitStream stream, HuffmanTableDC tableDC, Hu
         stream.MoveForward(acCodeLength + encodedBitCount);
         
         // check if we have read an end-of-block symbol and can early-exit
-        if (symbol == ZRL)
+        if (symbol == EOB)
             break;
         
         // jump slots which should be zeros before the next value
@@ -330,8 +332,8 @@ void DecodeBlock(uint warpID, inout BitStream stream, HuffmanTableDC tableDC, Hu
     idct8x8_optimized(warpID);
 
     // refit to 0->1 range and level shift
-    mcuBlockData[outputIndices.x] = asint((asfloat(mcuBlockData[outputIndices.x]) * (1. / 255.) + 0.5));
-    mcuBlockData[outputIndices.y] = asint((asfloat(mcuBlockData[outputIndices.y]) * (1. / 255.) + 0.5));
+    //mcuBlockData[outputIndices.x] = asint((asfloat(mcuBlockData[outputIndices.x]) * (1. / 255.) + 0.5));
+    //mcuBlockData[outputIndices.y] = asint((asfloat(mcuBlockData[outputIndices.y]) * (1. / 255.) + 0.5));
 }
 
 void DecodeMCU_444(uint warpID, uint mcuIndex, JpegHeader jpegInfo, RWTexture2D<float4> output)
@@ -369,12 +371,12 @@ void DecodeMCU_444(uint warpID, uint mcuIndex, JpegHeader jpegInfo, RWTexture2D<
     // first pixel
     float3 result = float3(colorCache.xy, asfloat(mcuBlockData[outputIndices.x]));
     if (all(outputCoord.xy < resolution))
-        output[outputCoord.xy] = float4(YCbCrToRgb(result), 1);
+        output[outputCoord.xy] = float4(YCbCrToRgb_LvlShift(result), 1);
 
     // second pixel
     result = float3(colorCache.zw, asfloat(mcuBlockData[outputIndices.y]));
     if (all(outputCoord.zw < resolution))
-        output[outputCoord.zw] = float4(YCbCrToRgb(result), 1);
+        output[outputCoord.zw] = float4(YCbCrToRgb_LvlShift(result), 1);
 }
 
 // for YUV 420
@@ -445,7 +447,7 @@ void DecodeMCU_420(uint warpID, uint mcuIndex, JpegHeader jpegInfo, RWTexture2D<
         float2 CbCr = (warpID & 1) ? writeCbCr.zw : writeCbCr.xy; // will receive 2 pixels, decide which we need
         
         float3 rgb1, rgb2;
-        YCbCrToRgb(asfloat(int2(mcuBlockData[outputIndices.x], mcuBlockData[outputIndices.x + 1])), CbCr, rgb1, rgb2);
+        YCbCrToRgb_LvlShift(asfloat(int2(mcuBlockData[outputIndices.x], mcuBlockData[outputIndices.x + 1])), CbCr, rgb1, rgb2);
         
         // first pixel
         if (all(blockCoord.xy < resolution))
