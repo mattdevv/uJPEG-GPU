@@ -105,10 +105,6 @@ void CUDAsubroutineInplaceIDCTvector(uint base, uint step)
 
 void idct8x8_optimized(uint lane)
 {
-    // spread out the lanes doing work within the group to allow time for memory writes to finish
-    // avoids needing to do 'GroupMemoryBarrierWithGroupSync()'
-    lane = lane >> 2;
-    
     if (lane < 8)
     {
         // IDCT: columns
@@ -178,8 +174,8 @@ uint GetZigZag(uint index)
 void UndoZigZagQuantize(uint warpID, QuantizationTable quantTable)
 {
     //uint2 outputIndices = uint2(warpID * 2, warpID * 2 + 1);
-    //uint2 outputIndices = uint2(warpID, warpID + 32);
-    uint2 outputIndices = GetBlockIndices(warpID);
+    uint2 outputIndices = uint2(warpID, warpID + 32); // this processing order allows starting IDCT without group sync
+    //uint2 outputIndices = GetBlockIndices(warpID);
 
     uint2 quants = quantTable.GetPairAt(outputIndices.x);
     uint2 ZigZagIndex = uint2(ZigZagLUT[outputIndices.x], ZigZagLUT[outputIndices.y]);
@@ -430,7 +426,14 @@ void DecodeMCU_420(uint warpID, uint mcuIndex, JpegHeader jpegInfo, RWTexture2D<
     {
         // decode luminance
         DecodeBlock(warpID, stream, jpegInfo.dcHuffmanTable, jpegInfo.acHuffmanTable, jpegInfo.luminanceQuant, lastDC_Y);
-
+        
+        // if statements will be compiled away when unrolling
+        if (q == 0) blockCoord += uint2( 0, 0).xyxy; // bottom left
+        if (q == 1) blockCoord += uint2( 8, 0).xyxy; // bottom right
+        if (q == 2) blockCoord += uint2(-8, 8).xyxy; // top left
+        if (q == 3) blockCoord += uint2( 8, 0).xyxy; // top right
+        
+        if (q == 0) downsampledIndex += 0;
         if (q == 1) downsampledIndex += 2;
         if (q == 2) downsampledIndex += 14;
         if (q == 3) downsampledIndex += 2;
@@ -442,13 +445,7 @@ void DecodeMCU_420(uint warpID, uint mcuIndex, JpegHeader jpegInfo, RWTexture2D<
         float2 CbCr = (warpID & 1) ? writeCbCr.zw : writeCbCr.xy; // will receive 2 pixels, decide which we need
         
         float3 rgb1, rgb2;
-        YCbCrToRgb(float2(asfloat(mcuBlockData[outputIndices.x]), asfloat(mcuBlockData[outputIndices.x + 1])), CbCr, rgb1, rgb2);
-        
-        // if statements will be compiled away when unrolling
-        if (q == 0) blockCoord += uint2(0, 0).xyxy; // bottom left
-        if (q == 1) blockCoord += uint2(8, 0).xyxy; // bottom right
-        if (q == 2) blockCoord += uint2(-8, 8).xyxy; // top left
-        if (q == 3) blockCoord += uint2(8, 0).xyxy; // top right
+        YCbCrToRgb(asfloat(int2(mcuBlockData[outputIndices.x], mcuBlockData[outputIndices.x + 1])), CbCr, rgb1, rgb2);
         
         // first pixel
         if (all(blockCoord.xy < resolution))
