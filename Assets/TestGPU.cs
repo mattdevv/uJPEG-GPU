@@ -1,3 +1,4 @@
+using NaughtyAttributes;
 using UnityEngine;
 
 public class TestGPU : MonoBehaviour
@@ -15,7 +16,6 @@ public class TestGPU : MonoBehaviour
     public bool downsampleChroma;
     public bool optimalHuffman;
     
-    // Start is called once before the first execution of Update after the MonoBehaviour is created
     void Start()
     {
         JpegData j;
@@ -56,6 +56,9 @@ public class TestGPU : MonoBehaviour
 
     private void Update()
     {
+        //if (Time.frameCount > 1)
+        //    return;
+        
         if (runtimeBuffer != null)
         {
             runtimeBuffer.SetupCompute(computeShader, runtimeRT);

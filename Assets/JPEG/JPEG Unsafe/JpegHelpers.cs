@@ -1,4 +1,5 @@
-﻿using Unity.Collections;
+﻿using System;
+using Unity.Collections;
 using UnityEngine;
 using UnityEngine.Experimental.Rendering;
 
@@ -75,7 +76,7 @@ public class JpegHelpers
         RenderTexture.active = rt;
 
         // 4. Create a new readable Texture2D and read the pixels from the RT
-        Texture2D readableText = new Texture2D(source.width, source.height) {
+        Texture2D readableText = new Texture2D(source.width, source.height, graphicsFormat, TextureCreationFlags.DontInitializePixels | TextureCreationFlags.DontUploadUponCreate) {
             name = source.name,
             wrapMode = source.wrapMode,
             filterMode = source.filterMode,
@@ -298,5 +299,75 @@ public class JpegHelpers
             result[(bitCount-1) - i] = (char)('0' + ((value >> (int)i) & 1u)) ;
         }
         return new string(result);
+    }
+    
+    public static uint GetMCUWidth(JpegData.Format format)
+    {
+        switch (format)
+        {
+            case JpegData.Format.BW:
+                return 8;
+            case JpegData.Format.YUV420:
+                return 16;
+            case JpegData.Format.YUV444:
+                return 8;
+            default:
+                throw new Exception($"Unknown format: {format}");
+        }
+    }
+    
+    public static uint GetMCUHeight(JpegData.Format format)
+    {
+        switch (format)
+        {
+            case JpegData.Format.BW:
+                return 8;
+            case JpegData.Format.YUV420:
+                return 16;
+            case JpegData.Format.YUV444:
+                return 8;
+            default:
+                throw new Exception($"Unknown format: {format}");
+        }
+    }
+    
+    public static Vector2Int GetMCUSize(JpegData.Format format)
+    {
+        switch (format)
+        {
+            case JpegData.Format.BW:
+                return new Vector2Int(8, 8);
+            case JpegData.Format.YUV420:
+                return new Vector2Int(16, 16);
+            case JpegData.Format.YUV444:
+                return new Vector2Int(8, 8);
+            default:
+                throw new Exception($"Unknown format: {format}");
+        }
+    }
+    
+    public static uint CalculateNumMCUsForTexture(uint imageWidth, uint imageHeight, JpegData.Format format)
+    {
+        var mcuSize = GetMCUSize(format);
+        
+        var numMCUsX = DivRoundUp(imageWidth,  (uint)mcuSize.x);
+        var numMCUsY = DivRoundUp(imageHeight, (uint)mcuSize.y);
+
+        return numMCUsX * numMCUsY;
+    }
+    
+    public static uint GetMCUsPerWave(JpegData.Format format)
+    {
+        switch (format)
+        {
+            case JpegData.Format.BW:
+                return 1;
+            case JpegData.Format.YUV420:
+                return 1; // 2 if you wish to use the faster compute kernel
+            case JpegData.Format.YUV444:
+                return 1;
+            default:
+                throw new Exception($"Unknown format: {format}");
+        }
     }
 }

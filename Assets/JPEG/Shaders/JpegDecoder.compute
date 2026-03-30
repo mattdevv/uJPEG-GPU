@@ -5,45 +5,68 @@
 #pragma require wavebasic //: HAS_WAVE_INTRINSICS // could add alternate path for platforms without intrinsics
 
 #include "Includes/JpegUtils.hlsl"
+//#include "Includes/JpegWarp64.hlsl"
 
-RWTexture2D<float4> _Result;
-uint dispatchWidth;
+RWTexture2D<float4> _OutputTex;
+uint _dispatchWidth;
 
 [numthreads(32,1,1)]
 void CS_JPEG_Greyscale (uint3 id : SV_GroupThreadID, uint3 groupID : SV_GroupID)
 {
-    JpegHeader jpegInfo = jpegHeader[0];
+    JpegHeader jpegInfo = _jpegHeader[0];
     
     // prevent decoding more MCUs than exist
-    uint mcuIndex = groupID.x + groupID.y * dispatchWidth;
+    uint mcuIndex = groupID.x + groupID.y * _dispatchWidth;
     if (mcuIndex >= jpegInfo.numMCUs)
         return;
 
-    DecodeMCU_BW(id.x, mcuIndex, jpegInfo, _Result);
+    DecodeMCU_BW(id.x, mcuIndex, jpegInfo, _OutputTex);
 }
 
 [numthreads(32,1,1)]
 void CS_JPEG_420 (uint3 id : SV_GroupThreadID, uint3 groupID : SV_GroupID)
 {
-    JpegHeader jpegInfo = jpegHeader[0];
+    JpegHeader jpegInfo = _jpegHeader[0];
     
     // prevent decoding more MCUs than exist
-    uint mcuIndex = groupID.x + groupID.y * dispatchWidth;
+    uint mcuIndex = groupID.x + groupID.y * _dispatchWidth;
     if (mcuIndex >= jpegInfo.numMCUs)
         return;
 
-    DecodeMCU_420(id.x, mcuIndex, jpegInfo, _Result);
+    DecodeMCU_420(id.x, mcuIndex, jpegInfo, _OutputTex);
 }
+
+/*
+// Alternate method acheives slightly faster but much more complex and memory heavy
+// tried to optimise for occupancy and removing bank conflicts
+// requires changing the dispatch code and the includes above
+[numthreads(8, 8, 1)]
+void CS_JPEG_420 (uint3 id : SV_GroupThreadID, uint3 groupID : SV_GroupID)
+{
+    JpegHeader jpegInfo = _jpegHeader[0];
+    
+    /*uint2 coord = uint2((groupID.x + groupID.y * _dispatchWidth), 0) * uint2(4, 8) + id.xy;
+    if (all(coord < uint2(jpegInfo.width, jpegInfo.height)))
+        _OutputTex[coord] += 0.2;
+    return;#1#
+    
+    // prevent decoding more MCUs than exist
+    uint mcuIndex = (groupID.x + groupID.y * _dispatchWidth) * 2 + (id.y / 4);
+    if (mcuIndex >= jpegInfo.numMCUs)
+        return;
+
+    DecodeMCU_420(id.xy, mcuIndex, jpegInfo, _OutputTex);
+}*/
 
 [numthreads(32,1,1)]
 void CS_JPEG_444 (uint3 id : SV_GroupThreadID, uint3 groupID : SV_GroupID)
 {
-    JpegHeader jpegInfo = jpegHeader[0];
+    JpegHeader jpegInfo = _jpegHeader[0];
     
     // prevent decoding more MCUs than exist
-    uint mcuIndex = groupID.x + groupID.y * dispatchWidth;
+    uint mcuIndex = groupID.x + groupID.y * _dispatchWidth;
     if (mcuIndex >= jpegInfo.numMCUs)
         return;
 
-    DecodeMCU_444(id.x, mcuIndex, jpegInfo, _Result);
+    DecodeMCU_444(id.x, mcuIndex, jpegInfo, _OutputTex);
 }

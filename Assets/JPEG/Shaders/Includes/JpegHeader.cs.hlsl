@@ -25,12 +25,12 @@ struct QuantizationTable {
 
 struct HuffmanTableDC
 {
-    uint codes[12];
+    uint codes[12]; // MSB-desc (8bit code-length), (8bit symbol), (16bit code)
 };
 
 struct HuffmanTableAC
 {
-    uint codes[256];
+    uint codes[256]; // MSB-desc (8bit code-length), (8bit symbol), (16bit code)
 };
 
 struct JpegHeader
@@ -47,6 +47,9 @@ struct JpegHeader
                        HuffmanTableAC acHuffmanTable;
 };
 
-StructuredBuffer<JpegHeader> jpegHeader;
+StructuredBuffer<JpegHeader> _jpegHeader;
+uint _imageWidth;
+uint _imageHeight;
+uint _numMCUsX;
 
 #endif

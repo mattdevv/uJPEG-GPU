@@ -7,6 +7,7 @@ public class TestJPEG : MonoBehaviour
     public Material material;
     
     public Texture2D input;
+    public JpegAsset inputAsset;
     [NaughtyAttributes.ReadOnly] 
     public Texture2D output;
     
@@ -27,24 +28,41 @@ public class TestJPEG : MonoBehaviour
             if (Application.isPlaying) Destroy(output);
             else DestroyImmediate(output);
         }
-        
-        if (!JpegHelpers.IsValidTexture(input))
-            return;
 
-        if (JpegHelpers.IsReadableTexture(input))
+        JpegData jpeg;
+
+        if (inputAsset != null)
         {
-            JpegData j = new (input, downsampleChroma, quality, optimalHuffman);
-            output = j.Decode();
+            jpeg = inputAsset.jpeg;
+        }
+        else if (input != null)
+        {
+            if (!JpegHelpers.IsValidTexture(input))
+            {
+                Debug.LogWarning($"The input texture is invalid: {input.name}", input);
+                return;
+            }
+
+            if (JpegHelpers.IsReadableTexture(input))
+            {
+                jpeg = new (input, downsampleChroma, quality, optimalHuffman);
+            }
+            else
+            {
+                Debug.Log("Could not read, created a copy of input texture.");
+                Texture2D readableTexture = JpegHelpers.GetReadableTexture(input);
+                jpeg = new (readableTexture, downsampleChroma, quality, optimalHuffman);
+                DestroyImmediate(readableTexture);
+            }
         }
         else
         {
-            Debug.Log("Could not read, created a copy of input texture.");
-            Texture2D readableTexture = JpegHelpers.GetReadableTexture(input);
-            JpegData j = new (readableTexture, downsampleChroma, quality, optimalHuffman);
-            output = j.Decode();
-            DestroyImmediate(readableTexture);
+            Debug.LogWarning("No input to use");
+            return;
         }
         
+        
+        output = jpeg.Decode();
         material.mainTexture = output;
     }
 }

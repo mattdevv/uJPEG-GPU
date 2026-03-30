@@ -37,9 +37,7 @@ public class JpegBuffer : IDisposable
         wrapMode = jpeg.wrapMode;
         filterMode = jpeg.filterMode;
         
-        uint mcuWidth = (format == JpegData.Format.YUV420) ? 16u : 8u;
-        uint mcuHeight = (format == JpegData.Format.YUV420) ? 16u : 8u;
-        numMCUs = JpegHelpers.DivRoundUp((uint)width, mcuWidth) * JpegHelpers.DivRoundUp((uint)height, mcuHeight);
+        numMCUs = JpegHelpers.CalculateNumMCUsForTexture((uint)jpeg.width, (uint)jpeg.height, jpeg.format);
 
         JpegHeader[] jpegHeader = new JpegHeader[1];
         jpegHeader[0].Fill(jpeg);
@@ -47,6 +45,7 @@ public class JpegBuffer : IDisposable
         headerBuffer.SetData(jpegHeader);
         
         // need to align data to 16-bytes for GPU to easily read
+        // Unity doesn't allow binding Buffers with an offset, but maybe one day...
         int alignedByteOffsetBlocks = JpegHelpers.RoundUp(jpeg.packedOffsets.Length, 4 * sizeof(uint));
         int alignedByteOffset = JpegHelpers.RoundUp(jpeg.bitstream.Length * sizeof(uint), 4 * sizeof(uint));
         spans = new Vector2Int(alignedByteOffsetBlocks, alignedByteOffset);
@@ -71,30 +70,45 @@ public class JpegBuffer : IDisposable
 
     public RenderTextureDescriptor GetRenderTextureDescriptor()
     {
-        var textureFormat = (format == JpegData.Format.BW ? GraphicsFormat.R8_UNorm : GraphicsFormat.R8G8B8A8_SRGB);
+        var textureFormat = format == JpegData.Format.BW 
+            ? GraphicsFormat.R8_UNorm 
+            : GraphicsFormat.R8G8B8A8_SRGB;
+        
         return new RenderTextureDescriptor(width, height, textureFormat, 0, 0);
     }
 
     public void SetupCompute(ComputeShader cs, RenderTexture rt)
     {
+        uint numMCUsPerWave = JpegHelpers.GetMCUsPerWave(format);
+        uint scaledMCUCount = (numMCUs + numMCUsPerWave - 1) / numMCUsPerWave;
+        
         // essentially a square to minimise warp groups needed
-        int dispatchDim = (int)Math.Ceiling(Math.Sqrt(numMCUs));
+        int dispatchDim = (int)Math.Ceiling(Math.Sqrt(scaledMCUCount));
         int x = dispatchDim;
         int y = (dispatchDim * (dispatchDim - 1) >= numMCUs) // check if we can skip final row
             ? dispatchDim - 1 
             : dispatchDim;
         
         int kernelId = (int)format;
-        cs.SetInt("dispatchWidth", dispatchDim);
-        cs.SetBuffer(kernelId, "jpegHeader", headerBuffer);
-        cs.SetBuffer(kernelId, "jpegData", bodyBuffer);
-        cs.SetTexture(kernelId, "_Result", rt);
+        cs.SetInt("_dispatchWidth", x);
+        cs.SetBuffer(kernelId, "_jpegHeader", headerBuffer);
+        cs.SetBuffer(kernelId, "_jpegData", bodyBuffer);
+        cs.SetTexture(kernelId, "_OutputTex", rt);
+        
+        cs.SetInt("_imageWidth", width);
+        cs.SetInt("_imageHeight", height);
+        
+        int mcuWidth = (int)JpegHelpers.GetMCUWidth(format);
+        cs.SetInt("_numMCUsX", JpegHelpers.DivRoundUp(width, mcuWidth));
     }
 
     public void DispatchCompute(ComputeShader cs)
     {
+        uint numMCUsPerWave = JpegHelpers.GetMCUsPerWave(format);
+        uint scaledMCUCount = (numMCUs + numMCUsPerWave - 1) / numMCUsPerWave;
+        
         // essentially a square to minimise warp groups needed
-        int dispatchDim = (int)Math.Ceiling(Math.Sqrt(numMCUs));
+        int dispatchDim = (int)Math.Ceiling(Math.Sqrt(scaledMCUCount));
         int x = dispatchDim;
         int y = (dispatchDim * (dispatchDim - 1) >= numMCUs) // check if we can skip final row
             ? dispatchDim - 1 
@@ -106,24 +120,36 @@ public class JpegBuffer : IDisposable
     
     public void SetupCompute(CommandBuffer cmd, ComputeShader cs, RenderTexture rt)
     {
+        uint numMCUsPerWave = JpegHelpers.GetMCUsPerWave(format);
+        uint scaledMCUCount = (numMCUs + numMCUsPerWave - 1) / numMCUsPerWave;
+        
         // essentially a square to minimise warp groups needed
-        int dispatchDim = (int)Math.Ceiling(Math.Sqrt(numMCUs));
+        int dispatchDim = (int)Math.Ceiling(Math.Sqrt(scaledMCUCount));
         int x = dispatchDim;
         int y = (dispatchDim * (dispatchDim - 1) >= numMCUs) // check if we can skip final row
             ? dispatchDim - 1 
             : dispatchDim;
         
         int kernelId = (int)format;
-        cmd.SetComputeIntParam(cs, "dispatchWidth", dispatchDim);
-        cmd.SetComputeBufferParam(cs, kernelId, "jpegHeader", headerBuffer);
-        cmd.SetComputeBufferParam(cs, kernelId, "jpegData", bodyBuffer);
-        cmd.SetComputeTextureParam(cs, kernelId, "_Result", rt);
+        cmd.SetComputeIntParam(cs, "_dispatchWidth", x);
+        cmd.SetComputeBufferParam(cs, kernelId, "_jpegHeader", headerBuffer);
+        cmd.SetComputeBufferParam(cs, kernelId, "_jpegData", bodyBuffer);
+        cmd.SetComputeTextureParam(cs, kernelId, "_OutputTex", rt);
+        
+        cmd.SetComputeIntParam(cs, "_imageWidth", width);
+        cmd.SetComputeIntParam(cs, "_imageHeight", height);
+        
+        int mcuWidth = (int)JpegHelpers.GetMCUWidth(format);
+        cmd.SetComputeIntParam(cs, "_numMCUsX", JpegHelpers.DivRoundUp(width, mcuWidth));
     }
     
     public void DispatchCompute(CommandBuffer cmd, ComputeShader cs)
     {
+        uint numMCUsPerWave = JpegHelpers.GetMCUsPerWave(format);
+        uint scaledMCUCount = (numMCUs + numMCUsPerWave - 1) / numMCUsPerWave;
+        
         // essentially a square to minimise warp groups needed
-        int dispatchDim = (int)Math.Ceiling(Math.Sqrt(numMCUs));
+        int dispatchDim = (int)Math.Ceiling(Math.Sqrt(scaledMCUCount));
         int x = dispatchDim;
         int y = (dispatchDim * (dispatchDim - 1) >= numMCUs) // check if we can skip final row
             ? dispatchDim - 1 

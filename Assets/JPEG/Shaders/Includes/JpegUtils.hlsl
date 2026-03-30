@@ -6,8 +6,7 @@
 
 #define EOB 0
 
-ByteAddressBuffer jpegData;
-
+ByteAddressBuffer _jpegData;
 groupshared int mcuBlockData[64];
 
 uint DivRoundUp(uint dividend, uint divisor)
@@ -34,13 +33,13 @@ float3 RgbToYCbCr(float3 rgb)
 
 float3 YCbCrToRgb_LvlShift(float3 yCbCr)
 {
-    float Y  = yCbCr.r * (1. / 255.) + 0.5;
-    float Cb = yCbCr.g * (1. / 255.) + 0.0;
-    float Cr = yCbCr.b * (1. / 255.) + 0.0;
+    float Y  = yCbCr.r * (1. / 255.);
+    float Cb = yCbCr.g * (1. / 255.);
+    float Cr = yCbCr.b * (1. / 255.);
 
-    float r = Y + Cr * +1.402f;
-    float g = Y + Cb * -0.344136f + Cr * -0.714136f;
-    float b = Y + Cb * +1.772f;
+    float r = 0.5 + Y + Cr * +1.402f;
+    float g = 0.5 + Y + Cb * -0.344136f + Cr * -0.714136f;
+    float b = 0.5 + Y + Cb * +1.772f;
         
     return float3(r, g, b);
 }
@@ -148,12 +147,26 @@ const static uint InvZigZagLUT[64] =
     53, 60, 61, 54, 47, 55, 62, 63,
 };
 
-const static uint Packed_ZigZagLUT[16] = {
-    0, 0, 0, 0,
-    0, 0, 0, 0,
-    0, 0, 0, 0,
-    0, 0, 0, 0,
+// precomputed packed table of zigzag indices
+// each value holds 1 byte for [i] [i+32] [(i+1)] [(i+1)+32]
+const static uint ZigZagPacked[16] =
+{
+    318835200, 537270021,
+    755967758, 907818011,
+    369366018, 638394631,
+    857353744, 1009399581,
+    570955011, 789652748,
+    941503001, 1026243369,
+    604709641, 823668754,
+    975714591, 1060453932, 
 };
+
+uint2 UnpackZigZag(uint warpID)
+{
+    uint packed = ZigZagPacked[warpID >> 1];
+    packed >>= (warpID & 1) * 16;
+    return uint2(packed & 0xFF, packed >> 8);
+}
 
 // each thread will output sequential 2 pixels
 uint2 GetBlockIndices(uint warpID)
@@ -163,27 +176,17 @@ uint2 GetBlockIndices(uint warpID)
         warpID * 2 + 1);
 }
 
-uint GetZigZag(uint index)
-{
-    // read byte from uint array
-    uint word = Packed_ZigZagLUT[index >> 2];
-    uint shift = (index & 0x3) << 3;
-    uint mask = 0xFF;
-        
-    return word >> shift & mask;
-}
-
 void UndoZigZagQuantize(uint warpID, QuantizationTable quantTable)
 {
     //uint2 outputIndices = uint2(warpID * 2, warpID * 2 + 1);
     uint2 outputIndices = uint2(warpID, warpID + 32); // this processing order allows starting IDCT without group sync
     //uint2 outputIndices = GetBlockIndices(warpID);
 
-    uint2 quants = quantTable.GetPairAt(outputIndices.x);
-    uint2 ZigZagIndex = uint2(ZigZagLUT[outputIndices.x], ZigZagLUT[outputIndices.y]);
+    int2 quants = asint(quantTable.GetPairAt(outputIndices.x));
+    uint2 ZigZagIndex = UnpackZigZag(warpID);
     
-    uint A = asuint(mcuBlockData[ZigZagIndex.x]) * quants.x;
-    uint B = asuint(mcuBlockData[ZigZagIndex.y]) * quants.y;
+    uint A = asuint(mcuBlockData[ZigZagIndex.x] * quants.x);
+    uint B = asuint(mcuBlockData[ZigZagIndex.y] * quants.y);
 
     mcuBlockData[outputIndices.x] = asint((float)asint(A));
     mcuBlockData[outputIndices.y] = asint((float)asint(B));
@@ -197,14 +200,14 @@ uint GetBitOffsetMCU(uint mcuIndex)
 
     // 20 bytes is 1 uint + 8 ushort
     uint offsetFull = divide * 20;
-    uint fullBitOffset = jpegData.Load(offsetFull);
+    uint fullBitOffset = _jpegData.Load(offsetFull);
     
     if (modulo == 0)
         return fullBitOffset;
 
     // if not a multiple of 9, need to also read an offset from the last 9th value
     uint offsetRelative = offsetFull + 4 + (modulo - 1) * 2;
-    uint relativeBitOffset = LoadUShort(jpegData, offsetRelative); // mask to be ushort
+    uint relativeBitOffset = LoadUShort(_jpegData, offsetRelative); // mask to be ushort
     return fullBitOffset + relativeBitOffset;
 }
 
@@ -281,67 +284,66 @@ void DecodeBlock(uint warpID, inout BitStream stream, HuffmanTableDC tableDC, Hu
     uint2 outputIndices = GetBlockIndices(warpID);
     
     // reset groupshared memory
-    mcuBlockData[outputIndices.x] = 0;
-    mcuBlockData[outputIndices.y] = 0;
+    mcuBlockData[warpID * 2 + 0] = 0;
+    mcuBlockData[warpID * 2 + 1] = 0;
 
     // decode the DC values
     {
-        uint nextBits = stream.PeakUInt();
+        uint nextBits = stream.Peak(6 + 12);
         
         uint dcSymbol;
         uint dcCodeLength = DecodeDC(warpID, tableDC, nextBits, dcSymbol);
-        
         uint encodedBitCount = dcSymbol;
+        stream.MoveForward(dcCodeLength + encodedBitCount);
+        
         uint mask = (1u << encodedBitCount) - 1u;
         uint encoded = (nextBits >> dcCodeLength) & mask;
-        int deltaDC = DecodeValue(encoded, encodedBitCount);
-        lastDC += deltaDC;
+        int valueDC = DecodeValue(encoded, encodedBitCount);
+        lastDC += valueDC; // value is a delta from last DC
 
-        mcuBlockData[0] = lastDC;
-        stream.MoveForward(dcCodeLength + encodedBitCount);
+        // only 1 thread needs to write this value
+        if (warpID == 0)
+            mcuBlockData[0] = lastDC;
     }
 
     // decode the AC values
     for (uint i=1; i<64; i++)
     {
-        uint symbol;
-        uint nextBits = stream.PeakUInt();
-        uint acCodeLength = DecodeAC(warpID, tableAC, nextBits, symbol);
-        uint encodedBitCount = symbol & 0x0F;
+        uint nextBits = stream.Peak(16 + 11);
+        
+        uint acSymbol;
+        uint acCodeLength = DecodeAC(warpID, tableAC, nextBits, acSymbol);
+        uint encodedBitCount = acSymbol & 0x0F;
         stream.MoveForward(acCodeLength + encodedBitCount);
         
         // check if we have read an end-of-block symbol and can early-exit
-        if (symbol == EOB)
+        if (acSymbol == EOB)
             break;
         
         // jump slots which should be zeros before the next value
-        uint zerosRun = symbol >> 4;
+        uint zerosRun = acSymbol >> 4;
         i += zerosRun;
         
         // decode this value
         uint mask = (1u << encodedBitCount) - 1u;
         uint encoded = (nextBits >> acCodeLength) & mask;
-        mcuBlockData[i] = DecodeValue(encoded, encodedBitCount);
+        uint valueAC = DecodeValue(encoded, encodedBitCount);
+        
+        // only 1 thread needs to write this value
+        if (warpID == 0)
+            mcuBlockData[i] = valueAC;
     }
     
-    // might be a good idea to dezigzag in the loop (its much fewer values than doing all 64 later)
-    // this didn't seem to help
-    
-    //time to decode the mcu block, dequantize/zigzag then undo DCT
+    //time to decode the mcu block, dequantize & zigzag, then undo DCT
     UndoZigZagQuantize(warpID, quantTable);
     idct8x8_optimized(warpID);
-
-    // refit to 0->1 range and level shift
-    //mcuBlockData[outputIndices.x] = asint((asfloat(mcuBlockData[outputIndices.x]) * (1. / 255.) + 0.5));
-    //mcuBlockData[outputIndices.y] = asint((asfloat(mcuBlockData[outputIndices.y]) * (1. / 255.) + 0.5));
 }
 
 void DecodeMCU_444(uint warpID, uint mcuIndex, JpegHeader jpegInfo, RWTexture2D<float4> output)
 {    
     uint bitOffset = GetBitOffsetMCU(mcuIndex);
     BitStream stream;
-    stream.stream = jpegData;
-    stream.bitOffset = bitOffset;
+    stream.Setup(_jpegData, bitOffset);
 
     uint2 outputIndices = GetBlockIndices(warpID);
     float4 colorCache = 0;
@@ -361,7 +363,7 @@ void DecodeMCU_444(uint warpID, uint mcuIndex, JpegHeader jpegInfo, RWTexture2D<
     // figure out output coord on texture
     uint2 resolution = uint2(jpegInfo.width, jpegInfo.height);
     uint numMCUsX = DivRoundUp(resolution.x, 8);
-    uint numMCUsY = DivRoundUp(resolution.y, 8);
+    //uint numMCUsY = DivRoundUp(resolution.y, 8);
     uint mcuX = mcuIndex % numMCUsX;
     uint mcuY = mcuIndex / numMCUsX;
 
@@ -393,8 +395,7 @@ void DecodeMCU_420(uint warpID, uint mcuIndex, JpegHeader jpegInfo, RWTexture2D<
 {    
     uint bitOffset = GetBitOffsetMCU(mcuIndex);
     BitStream stream;
-    stream.stream = jpegData;
-    stream.bitOffset = bitOffset;
+    stream.Setup(_jpegData, bitOffset);
 
     uint2 outputIndices = GetBlockIndices(warpID);
 
@@ -462,8 +463,7 @@ void DecodeMCU_BW(uint warpID, uint mcuIndex, JpegHeader jpegInfo, RWTexture2D<f
 {    
     uint bitOffset = GetBitOffsetMCU(mcuIndex);
     BitStream stream;
-    stream.stream = jpegData;
-    stream.bitOffset = bitOffset;
+    stream.Setup(_jpegData, bitOffset);
 
     uint2 outputIndices = GetBlockIndices(warpID);
     
