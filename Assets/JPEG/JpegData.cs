@@ -153,7 +153,7 @@ public partial class JpegData
                 decodedBytes = Decode_444();
                 break;
             default:
-                throw new UnexpectedEnumValueException<Format>(format);
+                throw new Exception($"Unknown format: {format}");
         }
 #if MATTDEVV_JPEG_TIMER
         Debug.Log($"Time to decode (ms): {decodeTimer.elapsedMilliseconds()}");
