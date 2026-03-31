@@ -4,9 +4,10 @@ Optimised Unity package to turn `Texture2D`'s into a custom JPEG *like* format t
 
 Why use this? Storing textures as JPEGs bitstreams in VRAM allows higher compression ratios than traditional formats and smaller sizes, at the cost of needing a decoding pass before use.
 
-How is GPU compression enabled? A bit offset to each JPEG MCU in the bitstream is stored and no delta compression is used between MCUs. With both of these techniques any MCU can be decoded without dependancies like is usual in the JPEG format. There is an additional overhead for the extra stored data of about 2.222 
+How is GPU compression implemented? A bit offset to each JPEG MCU in the bitstream is stored and no delta compression is used between MCUs. With both of these techniques any MCU can be decoded without dependancies like is usual in the JPEG format. There is an additional overhead for the extra stored data of about 2.222 
+
 __________________________
-# Usage
+### Usage
 Select one or more Texture2D assets in the project browser and then in the menu bar go to 'MyTools/Process Selected Textures'. A window will appear and allow you to convert the selected textures into a scriptable object. These objects contain a `JpegData` instance which is CPU decompressable, or it can be converted to a `JpegBuffer` which is GPU decodable. See scripts 'JpegTest.cs' and 'GPUTest.cs' for examples of each.
 __________________________
 # Performance
@@ -21,7 +22,7 @@ Two images are used for testing:
 ### CPU Encode Time
 
 | Quality | 1080p || 16k ||
-|-:|-|-|-|-|
+|-:|-:|-:|-:|-:|
 | | Compression (%) | Time (ms) | Compression (%) | Time (ms) |
 |  25 |  2.56 | 16.76 |  2.19 | 2146.23 |
 |  50 |  3.82 | 17.84 |  3.26 | 2255.36 |
@@ -30,7 +31,7 @@ Two images are used for testing:
 
 ### Decode Time (ms)
 | Quality | CPU || GPU||
-|-:|-|-|-|-|
+|-:|-:|:-:|-:|-:|
 | | 1080p | 16k | 1080p | 16k|
 |  25 |  6.602 |  975.528 | 0.032 | 2.664 |
 |  50 |  7.518 | 1073.159 | 0.040 | 3.214 |
@@ -74,9 +75,10 @@ __________________________
 - Support for 2 and 4 color channels
 - More subsampling formats
 - Add GPU encoder
+- Add tools to create/select quantization tables
 - Add multithread CPU encoder/decoder using Unity's Jobs System
 - Cleanup the code into a distributable package
 
 ## Special Thanks
-Inspired after reading: [Variable-Rate Texture Compression: Real-Time Rendering with JPEG](https://arxiv.org/abs/2510.08166)
-Great explaination of Huffman Tables: https://create.stephan-brumme.com/length-limited-prefix-codes/
+- Inspired after reading: [Variable-Rate Texture Compression: Real-Time Rendering with JPEG](https://arxiv.org/abs/2510.08166)
+- Great explaination of Huffman Tables: https://create.stephan-brumme.com/length-limited-prefix-codes/
