@@ -138,7 +138,7 @@ public class TextureProcessorWindow : EditorWindow
 
     private void CreateAsset(Texture2D texture)
     {
-        if (JpegHelpers.IsValidTexture(texture) == false)
+        if (JpegHelpers.IsValidForJPEG(texture) == false)
         {
             Debug.LogWarning("Something went wrong, texture is not valid: " + texture.name);
             return;
@@ -195,7 +195,7 @@ public class TextureProcessorWindow : EditorWindow
             if (string.IsNullOrEmpty(AssetDatabase.GetAssetPath(texture)))
                 continue;
 
-            if (JpegHelpers.IsValidTexture(texture))
+            if (JpegHelpers.IsValidForJPEG(texture))
             {
                 selectedTextures.Add(texture);
             }
@@ -225,7 +225,7 @@ public class TextureProcessorWindow : EditorWindow
             if (string.IsNullOrEmpty(AssetDatabase.GetAssetPath(texture)))
                 continue;
 
-            if (JpegHelpers.IsValidTexture(texture))
+            if (JpegHelpers.IsValidForJPEG(texture))
             {
                 return true;
             }

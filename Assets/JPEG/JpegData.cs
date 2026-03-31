@@ -40,6 +40,7 @@ public partial class JpegData
     public Format format;
     public int width;
     public int height;
+    public bool srgb;
     
     public uint numMCUs;
     public byte[] packedOffsets;
@@ -66,7 +67,8 @@ public partial class JpegData
         filterMode = texture.filterMode;
         width = texture.width;
         height = texture.height;
-
+        srgb = GraphicsFormatUtility.IsSRGBFormat(texture.graphicsFormat);
+        
         uint channels = GraphicsFormatUtility.GetComponentCount(texture.format);
         
         var data = texture.GetRawTextureData<byte>();
@@ -75,10 +77,11 @@ public partial class JpegData
         data.Dispose();
     }
     
-    public unsafe JpegData(NativeArray<byte> data, int imageWidth, int imageHeight, uint imageChannels, int quality = 50, bool downsample = true, bool optimalCompression = false)
+    public unsafe JpegData(NativeArray<byte> data, int imageWidth, int imageHeight, uint imageChannels, bool srgb, int quality = 50, bool downsample = true, bool optimalCompression = false)
     {
         this.width = imageWidth;
         this.height = imageHeight;
+        this.srgb = srgb;
         
         byte* dataPtr = (byte*)data.GetUnsafePtr();
         Encode(dataPtr, width, height, imageChannels, quality, optimalCompression, downsample);
@@ -129,7 +132,9 @@ public partial class JpegData
     public Texture2D Decode()
     {
         Texture2D output = new Texture2D(width, height, 
-            format == Format.BW ? GraphicsFormat.R8_UNorm : GraphicsFormat.R8G8B8A8_SRGB, 
+            format == Format.BW 
+                ? GraphicsFormat.R8_UNorm 
+                : srgb ? GraphicsFormat.R8G8B8A8_SRGB : GraphicsFormat.R8G8B8A8_UNorm, 
             0, TextureCreationFlags.DontUploadUponCreate) {
             name = imageName,
             filterMode = filterMode,

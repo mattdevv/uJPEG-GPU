@@ -5,7 +5,7 @@ using UnityEngine.Experimental.Rendering;
 
 public class JpegHelpers
 {
-    public static bool IsValidTexture(in Texture2D texture)
+    public static bool IsValidForJPEG(in Texture2D texture)
     {
         GraphicsFormat graphicsFormat = texture.graphicsFormat;
 
@@ -57,8 +57,10 @@ public class JpegHelpers
     public static Texture2D GetReadableTexture(Texture2D source)
     {
         GraphicsFormat graphicsFormat = (GraphicsFormatUtility.GetComponentCount(source.graphicsFormat) == 1)
-            ? GraphicsFormat.R8_UNorm 
-            : GraphicsFormat.R8G8B8A8_SRGB;
+            ? GraphicsFormat.R8_UNorm
+            : GraphicsFormatUtility.IsSRGBFormat(source.graphicsFormat)
+                ? GraphicsFormat.R8G8B8A8_SRGB
+                : GraphicsFormat.R8G8B8A8_UNorm;
         
         // 1. Create a temporary RenderTexture with the same dimensions
         RenderTexture rt = RenderTexture.GetTemporary(

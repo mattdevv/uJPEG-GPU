@@ -357,8 +357,9 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   material: {fileID: 2100000, guid: 75b0a4e4f3efc4047b0b21e16417967b, type: 2}
   input: {fileID: 2800000, guid: a86ca830485c75d44bacae4107269d99, type: 3}
+  inputAsset: {fileID: 0}
   output: {fileID: 0}
-  quality: 70
+  quality: 75
   downsampleChroma: 1
   optimalHuffman: 1
 --- !u!4 &734369374

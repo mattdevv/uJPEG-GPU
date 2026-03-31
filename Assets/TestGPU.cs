@@ -26,7 +26,7 @@ public class TestGPU : MonoBehaviour
         }
         else
         {
-            if (!JpegHelpers.IsValidTexture(input))
+            if (!JpegHelpers.IsValidForJPEG(input))
                 return;
 
             if (JpegHelpers.IsReadableTexture(input))

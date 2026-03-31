@@ -37,7 +37,8 @@ public class TestJPEG : MonoBehaviour
         }
         else if (input != null)
         {
-            if (!JpegHelpers.IsValidTexture(input))
+            // invalid texture is not possible to compress
+            if (!JpegHelpers.IsValidForJPEG(input))
             {
                 Debug.LogWarning($"The input texture is invalid: {input.name}", input);
                 return;

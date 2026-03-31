@@ -20,7 +20,8 @@ public class JpegBuffer : IDisposable
     [ReadOnly] public int width, height;
     [ReadOnly] public uint exactBits, numMCUs;
     [ReadOnly] public Vector2Int spans; // holds the size in bytes of each section of the buffer (block offsets, encoded data)
-    
+
+    public bool isSRGB;
     public TextureWrapMode wrapMode;
     public FilterMode filterMode;
     
@@ -33,7 +34,8 @@ public class JpegBuffer : IDisposable
         width = jpeg.width;
         height = jpeg.height;
         exactBits = jpeg.exactBits;
-        
+
+        isSRGB = jpeg.srgb;
         wrapMode = jpeg.wrapMode;
         filterMode = jpeg.filterMode;
         
@@ -72,7 +74,9 @@ public class JpegBuffer : IDisposable
     {
         var textureFormat = format == JpegData.Format.BW 
             ? GraphicsFormat.R8_UNorm 
-            : GraphicsFormat.R8G8B8A8_SRGB;
+            : isSRGB 
+                ? GraphicsFormat.R8G8B8A8_SRGB 
+                : GraphicsFormat.R8G8B8A8_UNorm;
         
         return new RenderTextureDescriptor(width, height, textureFormat, 0, 0);
     }
