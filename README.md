@@ -32,7 +32,7 @@ Two images are used for testing:
 |  25 |  6.602 |  975.528 | 0.032 | 2.664 |
 |  50 |  7.518 | 1073.159 | 0.040 | 3.214 |
 |  75 |  8.707 | 1218.612 | 0.051 | 4.012 |
-| 100 | 21.636 | 3149.584 | 0.014 | 16.580|
+| 100 | 21.636 | 3149.584 | 0.135 | 16.580|
 
 Note: the CPU decode performance can be improved by ~12% when using the 12-bit AC codes mode and its LUT.
 __________________________
