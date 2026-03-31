@@ -7,7 +7,34 @@ Why use this? Storing textures as JPEGs bitstreams in VRAM allows higher compres
 How is GPU compression enabled? A bit offset to each JPEG MCU in the bitstream is stored and no delta compression is used between MCUs. With both of these techniques any MCU can be decoded without dependancies like is usual in the JPEG format. There is an additional overhead for the extra stored data of about 2.222 
 __________________________
 # Performance
+- Testing was performed on an AMD 7950X CPU and NVIDIA RTX 4090 GPU. 
+- YUV422 subsampling was enabled, and 16-bit AC codes was enabled.
+- Compression is final size as a percentage of uncompressed size.  
 
+Two images are used for testing: 
+- A 1080x1920 scale/crop of [Image 1](https://images.nasa.gov/details/NHQ202603290004)
+- A 16k tiling of [big_building](https://imagecompression.info/test_images/)
+  
+### CPU Encode Time
+
+| Quality | 1080p || 16k ||
+|-:|-|-|-|-|
+| | Compression (%) | Time (ms) | Compression (%) | Time (ms) |
+|  25 |  2.56 | 16.76 |  2.19 | 2146.23 |
+|  50 |  3.82 | 17.84 |  3.26 | 2255.36 |
+|  75 |  5.48 | 19.24 |  4.74 | 2418.90 |
+| 100 | 24.74 | 31.50 | 24.52 | 4341.73 |
+
+### Decode Time (ms)
+| Quality | CPU || GPU||
+|-:|-|-|-|-|
+| | 1080p | 16k | 1080p | 16k|
+|  25 |  6.602 |  975.528 | 0.032 | 2.664 |
+|  50 |  7.518 | 1073.159 | 0.040 | 3.214 |
+|  75 |  8.707 | 1218.612 | 0.051 | 4.012 |
+| 100 | 21.636 | 3149.584 | 0.014 | 16.580|
+
+Note: the CPU decode performance can be improved by ~12% when using the 12-bit AC codes mode and its LUT.
 __________________________
 ### Supports:
 - CPU Encoding
@@ -48,4 +75,4 @@ __________________________
 
 ## Special Thanks
 Inspired after reading: [Variable-Rate Texture Compression: Real-Time Rendering with JPEG](https://arxiv.org/abs/2510.08166)
-Great explaination of Huffman Tables: (https://create.stephan-brumme.com/length-limited-prefix-codes/)
+Great explaination of Huffman Tables: https://create.stephan-brumme.com/length-limited-prefix-codes/
