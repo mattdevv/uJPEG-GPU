@@ -125,7 +125,8 @@ public partial class JpegData
         uint totalBits = bitsBitStream + bitsOverhead;
         Debug.Log($"Bits bitstream: {bitsBitStream} ({bitsBitStream / 8192f}kb)");
         Debug.Log($"Bits overhead: {bitsOverhead} ({bitsOverhead / 8192f}kb)");
-        Debug.Log($"Total bits: {totalBits / 8192f} ({totalBits / 8192f}kb)");
+        Debug.Log($"Total bits: {totalBits} ({totalBits / 8192f}kb)");
+        Debug.Log($"Compression (%): " + 100f * (totalBits / 8f) / ((float)(imageWidth * imageHeight) * Mathf.Clamp((int)imageChannels, 1, 3)));
 #endif
     }
 
