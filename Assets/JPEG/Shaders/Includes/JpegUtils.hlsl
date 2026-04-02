@@ -37,11 +37,13 @@ float3 YCbCrToRgb_LvlShift(float3 yCbCr)
     float Cb = yCbCr.g * (1. / 255.);
     float Cr = yCbCr.b * (1. / 255.);
 
-    float r = 0.5 + Y + Cr * +1.402f;
-    float g = 0.5 + Y + Cb * -0.344136f + Cr * -0.714136f;
-    float b = 0.5 + Y + Cb * +1.772f;
-        
-    return float3(r, g, b);
+    float r = (128. / 255.) + Y + Cr * +1.402f;
+    float g = (128. / 255.) + Y + Cb * -0.344136f + Cr * -0.714136f;
+    float b = (128. / 255.) + Y + Cb * +1.772f;
+
+    float3 rgb = float3(r, g, b);
+    
+    return rgb;
 }
 
 void YCbCrToRgb_LvlShift(float2 luminance, float2 CbCr, out float3 rgb1, out float3 rgb2)
@@ -51,9 +53,9 @@ void YCbCrToRgb_LvlShift(float2 luminance, float2 CbCr, out float3 rgb1, out flo
     float Cb = CbCr[0];
     float Cr = CbCr[1];
 
-    float r = 0.5 + Cr * (+1.402 / 255.);
-    float g = 0.5 + Cb * (-0.344136 / 255.) + Cr * (-0.714136f / 255.) ;
-    float b = 0.5 + Cb * (+1.772 / 255.);
+    float r = (128. / 255.) + Cr * (+1.402 / 255.);
+    float g = (128. / 255.) + Cb * (-0.344136 / 255.) + Cr * (-0.714136f / 255.) ;
+    float b = (128. / 255.) + Cb * (+1.772 / 255.);
 
     rgb1 = luminance.x + float3(r, g, b);
     rgb2 = luminance.y + float3(r, g, b);
@@ -161,11 +163,24 @@ const static uint ZigZagPacked[16] =
     975714591, 1060453932, 
 };
 
+const static uint InvZigZagPacked[16] =
+{
+    704717568, 940585224,
+    839006473, 604646147,
+    370679057, 387518240,
+    621485586, 855976964,
+    991115788, 757150746,
+    523249192, 773990185,
+    1007957275, 906378509,
+    923676423, 1058815509, 
+};
+
 uint2 UnpackZigZag(uint warpID)
 {
-    uint packed = ZigZagPacked[warpID >> 1];
-    packed >>= (warpID & 1) * 16;
-    return uint2(packed & 0xFF, packed >> 8);
+    uint word = ZigZagPacked[warpID / 2];
+    uint2 shift = (warpID & 1) * uint2(16, 16) + uint2(0, 8);
+    uint mask = 0xFF;
+    return (uint2(word, word) >> shift) & mask;
 }
 
 // each thread will output sequential 2 pixels
@@ -176,20 +191,30 @@ uint2 GetBlockIndices(uint warpID)
         warpID * 2 + 1);
 }
 
-void UndoZigZagQuantize(uint warpID, QuantizationTable quantTable)
+void UndoZigZagQuantize(uint2 outputIndices, QuantizationTable quantTable)
 {
-    //uint2 outputIndices = uint2(warpID * 2, warpID * 2 + 1);
-    uint2 outputIndices = uint2(warpID, warpID + 32); // this processing order allows starting IDCT without group sync
-    //uint2 outputIndices = GetBlockIndices(warpID);
-
-    int2 quants = asint(quantTable.GetPairAt(outputIndices.x));
-    uint2 ZigZagIndex = UnpackZigZag(warpID);
+    //uint2 outputIndices = uint2(warpID, warpID + 32); // this processing order allows starting IDCT without group sync
+    
+    uint2 ZigZagIndex = uint2(ZigZagLUT[outputIndices.x], ZigZagLUT[outputIndices.y]);
+    int2 quants = asint(uint2(quantTable.GetAt(outputIndices.x), quantTable.GetAt(outputIndices.y)));
     
     uint A = asuint(mcuBlockData[ZigZagIndex.x] * quants.x);
     uint B = asuint(mcuBlockData[ZigZagIndex.y] * quants.y);
 
     mcuBlockData[outputIndices.x] = asint((float)asint(A));
     mcuBlockData[outputIndices.y] = asint((float)asint(B));
+}
+
+void UndoZigZagQuantize(uint warpID, int2 quants, uint2 ZigZagIndex)
+{
+    uint2 outputIndices = uint2(warpID, warpID + 32); // this processing order allows starting IDCT without group sync
+    
+    uint A = asuint(mcuBlockData[ZigZagIndex.x] * quants.x);
+    uint B = asuint(mcuBlockData[ZigZagIndex.y] * quants.y);
+
+    mcuBlockData[outputIndices.x] = asint((float)asint(A));
+    mcuBlockData[outputIndices.y] = asint((float)asint(B));
+
 }
 
 // calculates and loads the offset to start reading an MCU at
@@ -255,16 +280,16 @@ uint DecodeAC(uint warpID, HuffmanTableAC hfTable, uint nextBits32, out uint dec
     for (int i=0; i < 256; i += WaveGetLaneCount())
     {
         uint symbolIndex = i + warpID;
-        
         uint packed = hfTable.codes[symbolIndex];
         uint codeLength = (packed >> 24);
         
-        // check masked bits against a unique code
+        // each thread checks its masked bits against a different code
         uint codeMask = (1 << codeLength) - 1;
         bool foundMatch = (packed & codeMask) == (nextBits32 & codeMask);
 
-        // only winner broadcasts it's ID
-        // if a code above the maximum huffman symbol count wins, it will also be 0xFFFFFFFF as we default all codes to that
+        // only matches broadcasts their code
+        // if multiple match, the shortest code will win as code-length is in MSB
+        // if a thread reads a code beyond maximum code count, it will still be 0xFFFFFFFF as all codes default to that
         uint winnerCode = WaveActiveMin(foundMatch ? packed : 0xFFFFFFFF); 
         if (winnerCode != 0xFFFFFFFF)
         {
@@ -279,11 +304,10 @@ uint DecodeAC(uint warpID, HuffmanTableAC hfTable, uint nextBits32, out uint dec
     return 0;
 }
 
-void DecodeBlock(uint warpID, inout BitStream stream, HuffmanTableDC tableDC, HuffmanTableAC tableAC, QuantizationTable quantTable, inout int lastDC)
+void ReadBlockFromStream(uint warpID, inout BitStream stream, HuffmanTableDC tableDC, HuffmanTableAC tableAC, inout int lastDC)
 {
-    uint2 outputIndices = GetBlockIndices(warpID);
-    
     // reset groupshared memory
+    // this pattern fixes some groupsync issues in YUV444
     mcuBlockData[warpID * 2 + 0] = 0;
     mcuBlockData[warpID * 2 + 1] = 0;
 
@@ -333,10 +357,6 @@ void DecodeBlock(uint warpID, inout BitStream stream, HuffmanTableDC tableDC, Hu
         if (warpID == 0)
             mcuBlockData[i] = valueAC;
     }
-    
-    //time to decode the mcu block, dequantize & zigzag, then undo DCT
-    UndoZigZagQuantize(warpID, quantTable);
-    idct8x8_optimized(warpID);
 }
 
 void DecodeMCU_444(uint warpID, uint mcuIndex, JpegHeader jpegInfo, RWTexture2D<float4> output)
@@ -348,22 +368,36 @@ void DecodeMCU_444(uint warpID, uint mcuIndex, JpegHeader jpegInfo, RWTexture2D<
     uint2 outputIndices = GetBlockIndices(warpID);
     float4 colorCache = 0;
     
+    // will reuse these variables in multiple blocks
+    uint2 ZigZagIndex = uint2(ZigZagLUT[warpID], ZigZagLUT[warpID + 32]);
+    int2 quants = asint(uint2(jpegInfo.luminanceQuant.GetAt(warpID), jpegInfo.luminanceQuant.GetAt(warpID + 32)));
+    
     // decode luminance
     int lastDC_Y = 0;
-    DecodeBlock(warpID, stream, jpegInfo.dcHuffmanTable, jpegInfo.acHuffmanTable, jpegInfo.luminanceQuant, lastDC_Y);
+    ReadBlockFromStream(warpID, stream, jpegInfo.dcHuffmanTable, jpegInfo.acHuffmanTable, lastDC_Y);
+    UndoZigZagQuantize(warpID, quants, ZigZagIndex);
+    idct8x8_optimized(warpID);
     colorCache.xz = asfloat(int2(mcuBlockData[outputIndices.x], mcuBlockData[outputIndices.y]));
+
+    // switch to chroma quants
+    quants = asint(uint2(jpegInfo.chromaQuant.GetAt(warpID), jpegInfo.chromaQuant.GetAt(warpID + 32)));
+    
     // decode chroma blue
     int lastDC_cB = 0;
-    DecodeBlock(warpID, stream, jpegInfo.dcHuffmanTable, jpegInfo.acHuffmanTable, jpegInfo.chromaQuant, lastDC_cB);
+    ReadBlockFromStream(warpID, stream, jpegInfo.dcHuffmanTable, jpegInfo.acHuffmanTable, lastDC_cB);
+    UndoZigZagQuantize(warpID, quants, ZigZagIndex);
+    idct8x8_optimized(warpID);
     colorCache.yw = asfloat(int2(mcuBlockData[outputIndices.x], mcuBlockData[outputIndices.y]));
+    
     // decode chroma red
     int lastDC_cR = 0;
-    DecodeBlock(warpID, stream, jpegInfo.dcHuffmanTable, jpegInfo.acHuffmanTable, jpegInfo.chromaQuant, lastDC_cR);
+    ReadBlockFromStream(warpID, stream, jpegInfo.dcHuffmanTable, jpegInfo.acHuffmanTable, lastDC_cR);
+    UndoZigZagQuantize(warpID, quants, ZigZagIndex);
+    idct8x8_optimized(warpID);
     
     // figure out output coord on texture
     uint2 resolution = uint2(jpegInfo.width, jpegInfo.height);
     uint numMCUsX = DivRoundUp(resolution.x, 8);
-    //uint numMCUsY = DivRoundUp(resolution.y, 8);
     uint mcuX = mcuIndex % numMCUsX;
     uint mcuY = mcuIndex / numMCUsX;
 
@@ -405,22 +439,35 @@ void DecodeMCU_420(uint warpID, uint mcuIndex, JpegHeader jpegInfo, RWTexture2D<
     int lastDC_cR = 0;
     
     float4 chromaCbCr = 0;
+
+    // We will reuse these variables in multiple stages
+    uint2 ZigZagIndex = uint2(ZigZagLUT[warpID], ZigZagLUT[warpID + 32]);
+    int2 quants = asint(uint2(jpegInfo.chromaQuant.GetAt(warpID), jpegInfo.chromaQuant.GetAt(warpID + 32)));
     
     // decode chroma blue
-    DecodeBlock(warpID, stream, jpegInfo.dcHuffmanTable, jpegInfo.acHuffmanTable, jpegInfo.chromaQuant, lastDC_cB);
+    ReadBlockFromStream(warpID, stream, jpegInfo.dcHuffmanTable, jpegInfo.acHuffmanTable, lastDC_cB);
+    UndoZigZagQuantize(warpID, quants, ZigZagIndex);
+    idct8x8_optimized(warpID);
     chromaCbCr.xz = asfloat(int2(mcuBlockData[outputIndices.x], mcuBlockData[outputIndices.y]));
     // decode chroma red
-    DecodeBlock(warpID, stream, jpegInfo.dcHuffmanTable, jpegInfo.acHuffmanTable, jpegInfo.chromaQuant, lastDC_cR);
+    ReadBlockFromStream(warpID, stream, jpegInfo.dcHuffmanTable, jpegInfo.acHuffmanTable, lastDC_cR);    
+    UndoZigZagQuantize(warpID, quants, ZigZagIndex);
+    idct8x8_optimized(warpID);
     chromaCbCr.yw = asfloat(int2(mcuBlockData[outputIndices.x], mcuBlockData[outputIndices.y]));
+
+    // switch to luma quants
+    quants = asint(uint2(jpegInfo.luminanceQuant.GetAt(warpID), jpegInfo.luminanceQuant.GetAt(warpID + 32)));
     
     // figure out output coord on texture
-    uint2 resolution = uint2(jpegInfo.width, jpegInfo.height);
-    uint numMCUsX = DivRoundUp(resolution.x, 16);
+    uint2 resolution = uint2(_imageWidth, _imageHeight); 
+    uint numMCUsX = _numMCUsX; 
+    //uint2 resolution = uint2(jpegInfo.width, jpegInfo.height);
+    //uint numMCUsX = DivRoundUp(resolution.x, 16);
     //uint numMCUsY = DivRoundUp(resolution.y, 16);
     uint mcuX = mcuIndex % numMCUsX;
     uint mcuY = mcuIndex / numMCUsX;
 
-    uint4 blockCoord = (uint2(mcuX, mcuY) * 16).xyxy + uint4(outputIndices.x % 8, outputIndices.x / 8, outputIndices.y % 8, outputIndices.y / 8);
+    uint2 blockCoord = (uint2(mcuX, mcuY) * 16) + uint2(outputIndices.x % 8, outputIndices.x / 8);
     uint downsampledIndex = MapSequenceIndex(outputIndices.x, 0);
     
     // loop and decode 4x luminance quadrants
@@ -428,34 +475,37 @@ void DecodeMCU_420(uint warpID, uint mcuIndex, JpegHeader jpegInfo, RWTexture2D<
     for (int q = 0; q < 4; q++)
     {
         // decode luminance
-        DecodeBlock(warpID, stream, jpegInfo.dcHuffmanTable, jpegInfo.acHuffmanTable, jpegInfo.luminanceQuant, lastDC_Y);
+        ReadBlockFromStream(warpID, stream, jpegInfo.dcHuffmanTable, jpegInfo.acHuffmanTable, lastDC_Y);
+        UndoZigZagQuantize(warpID, quants, ZigZagIndex);
+        idct8x8_optimized(warpID);
         
-        // if statements will be compiled away when unrolling
-        if (q == 0) blockCoord += uint2( 0, 0).xyxy; // bottom left
-        if (q == 1) blockCoord += uint2( 8, 0).xyxy; // bottom right
-        if (q == 2) blockCoord += uint2(-8, 8).xyxy; // top left
-        if (q == 3) blockCoord += uint2( 8, 0).xyxy; // top right
-        
-        if (q == 0) downsampledIndex += 0;
-        if (q == 1) downsampledIndex += 2;
-        if (q == 2) downsampledIndex += 14;
-        if (q == 3) downsampledIndex += 2;
-        
-        // each thread holds 4 samples (2 pixels chroma blue/red)
-        // use intrinsics to exchange the correct samples between threads
-        // each loop (q) exports a 2x1 pixel grid, these samples cover 2x2 and are shared for both
+        // each thread holds 4 samples (ie blue/red across 2 pixels)
+        // use intrinsics to exchange the needed samples between threads
+        // since each loop (q) write an aligned 2x1 pixel grid, a single sample can be shared for both
         float4 writeCbCr = WaveReadLaneAt(chromaCbCr, downsampledIndex);
-        float2 CbCr = (warpID & 1) ? writeCbCr.zw : writeCbCr.xy; // will receive 2 pixels, decide which we need
+        float2 CbCr = (warpID & 1 == 0) ? writeCbCr.xy : writeCbCr.zw; // will receive 2 pixels, decide which side we need
         
         float3 rgb1, rgb2;
-        YCbCrToRgb_LvlShift(asfloat(int2(mcuBlockData[outputIndices.x], mcuBlockData[outputIndices.x + 1])), CbCr, rgb1, rgb2);
+        YCbCrToRgb_LvlShift(asfloat(int2(mcuBlockData[outputIndices.x], mcuBlockData[outputIndices.y])), CbCr, rgb1, rgb2);
         
         // first pixel
         if (all(blockCoord.xy < resolution))
             output[blockCoord.xy] = float4(rgb1, 1);
+        
         // second pixel
-        if (all(blockCoord.zw < resolution))
-            output[blockCoord.zw] = float4(rgb2, 1);
+        blockCoord += uint2(1, 0); // shift x by 1
+        if (all(blockCoord.xy < resolution))
+            output[blockCoord.xy] = float4(rgb2, 1);
+        
+        // if statements will be compiled away when unrolling
+        // precalculated offsets to next read for next loop
+        if (q == 0) downsampledIndex +=  2; // bottom right
+        if (q == 1) downsampledIndex += 14; // top left
+        if (q == 2) downsampledIndex +=  2; // top right
+        // minus 1 because the previous loop will have already shifted x by 1, we need to undo that
+        if (q == 0) blockCoord += uint2( 8 - 1, 0); // bottom right
+        if (q == 1) blockCoord += uint2(-8 - 1, 8); // top left
+        if (q == 2) blockCoord += uint2( 8 - 1, 0); // top right
     }
 }
 
@@ -469,8 +519,12 @@ void DecodeMCU_BW(uint warpID, uint mcuIndex, JpegHeader jpegInfo, RWTexture2D<f
     
     // decode luminance
     int lastDC_Y = 0;
-    DecodeBlock(warpID, stream, jpegInfo.dcHuffmanTable, jpegInfo.acHuffmanTable, jpegInfo.luminanceQuant, lastDC_Y);
-    float2 luminances = asfloat(int2(mcuBlockData[outputIndices.x], mcuBlockData[outputIndices.y]));
+    ReadBlockFromStream(warpID, stream, jpegInfo.dcHuffmanTable, jpegInfo.acHuffmanTable, lastDC_Y);
+    UndoZigZagQuantize(warpID, jpegInfo.chromaQuant);
+    idct8x8_optimized(warpID);
+
+    // level shift and scale to (0-1) range
+    float2 luminances = asfloat(int2(mcuBlockData[outputIndices.x], mcuBlockData[outputIndices.y])) * (1./255.) + (128./255.);
     
     // figure out output coord on texture
     uint2 resolution = uint2(jpegInfo.width, jpegInfo.height);

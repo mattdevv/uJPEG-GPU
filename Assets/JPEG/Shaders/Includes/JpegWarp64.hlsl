@@ -112,7 +112,7 @@ void UndoZigZagQuantize(uint2 warpID, QuantizationTable quantTable)
     uint flatIndex = warpID.x + 8 * (warpID.y % 4);
     uint2 outputIndices = uint2(flatIndex, flatIndex + 32); // this processing order allows starting IDCT without group sync
 
-    int2 quants = asint(quantTable.GetPairAt(outputIndices.x));
+    int2 quants = asint(quantTable.GetPairForWarp(outputIndices.x));
     uint2 ZigZagIndex = UnpackZigZag(flatIndex);
 
     uint yOffset = warpID.y >= 4 ? 8 : 0;

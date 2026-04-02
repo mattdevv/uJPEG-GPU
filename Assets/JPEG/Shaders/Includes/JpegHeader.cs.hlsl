@@ -12,15 +12,16 @@ struct QuantizationTable {
         
         return word >> shift & mask;
     }
-
-    uint2 GetPairAt(uint index)
+    
+    // Requires that table has been reordered
+    // returns two quant values (warpID, warpID + 32)
+    /*uint2 GetPairForWarp(uint warpID) 
     {
-        uint word = table[index >> 2];
-        uint shift = (index & 0x3) << 3;
+        uint word = table[warpID / 2];
+        uint2 shift = (warpID & 1) * uint2(16, 16) + uint2(0, 8);
         uint mask = 0xFF;
-
-        return (uint2(word, word) >> uint2(shift, shift + 8)) & mask;
-    }
+        return (word.xx >> shift) & mask.xx;
+    }*/
 };
 
 struct HuffmanTableDC

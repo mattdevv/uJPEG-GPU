@@ -42,14 +42,25 @@ Shader "Unlit/ImageDiff"
                 o.uv = v.uv;
                 return o;
             }
-
-            fixed4 frag (v2f i) : SV_Target
+            
+            // Converts a color from linear light gamma to sRGB gamma
+            float4 fromLinear(float4 linearRGB)
             {
+                float3 cutoff = step(linearRGB.rgb, 0.0031308);
+                float3 higher = 1.055 * pow(linearRGB.rgb, 1.0/2.4) - 0.055;
+                float3 lower = linearRGB.rgb * 12.92;
+
+                return float4(lerp(higher, lower, cutoff), linearRGB.a);
+            }
+
+            float4 frag (v2f i) : SV_Target
+            {                
                 // sample the texture
-                fixed4 col = tex2D(_MainTex, i.uv);
-                fixed4 col2 = tex2D(_DiffTex, i.uv);
+                float4 srgb1 = (tex2D(_MainTex, i.uv));
+                float4 srgb2 = (tex2D(_DiffTex, i.uv));
+                float4 delta = srgb1 - srgb2;
                 
-                return _Scalar * abs(col - col2);
+                return abs(delta) * _Scalar;
             }
             ENDHLSL
         }

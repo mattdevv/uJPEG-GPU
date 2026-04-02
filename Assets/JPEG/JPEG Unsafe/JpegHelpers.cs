@@ -93,6 +93,21 @@ public class JpegHelpers
 
         return readableText;
     }
+
+    // shader processes 2 pixels in the block at an offset of 32
+    // rearrange array so data is next to each other
+    public static byte[] PackBlockForShader(byte[] bytes)
+    {
+        Debug.Assert(bytes.Length == 64);
+        
+        byte[] packed = new byte[64];
+        for (int i = 0; i < 32; i++)
+        {
+            packed[i * 2]     = bytes[i];
+            packed[i * 2 + 1] = bytes[i + 32];
+        }
+        return packed;
+    }
     
     public static unsafe void RgbToYCbCr(float* c, byte* YCbCr)
     {
@@ -255,8 +270,6 @@ public class JpegHelpers
         {
             str += $"{data[i]}, ";
         }
-        
-        Debug.Log(str);
     }
     
     public static void PrintLine<T>(T[] data)

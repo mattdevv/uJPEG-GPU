@@ -8,6 +8,7 @@ using Unity.Mathematics;
 using Unity.VisualScripting;
 using UnityEngine;
 using UnityEngine.Experimental.Rendering;
+using UnityEngine.Serialization;
 
 [BurstCompile]
 [Serializable]
@@ -51,8 +52,8 @@ public partial class JpegData
     //private BitStreamWriter writer; 
     public uint exactBits;
     [HideInInspector] public uint[] bitstream;
-    [HideInInspector] public byte[] quantTable;
-    [HideInInspector] public byte[] quantTable2;
+    [HideInInspector] public byte[] lumaninceQuantTable;
+    [HideInInspector] public byte[] chromaQuantTable;
 
     public unsafe JpegData(Texture2D texture, bool downsample = true, int quality = 50, bool optimalCompression = false)
     {
@@ -242,16 +243,16 @@ public partial class JpegData
         if (quality < 50) S = 5000 / quality;
         else              S = 200 - (quality * 2);
         
-        quantTable = new byte[64];
+        lumaninceQuantTable = new byte[64];
         for (int i = 0; i < 64; i++)
         {
-            quantTable[i] = (byte) Mathf.Clamp(Mathf.RoundToInt((MCUBlock.QuantizationTable[i] * S + 50f) / 100f), 1, 255);
+            lumaninceQuantTable[i] = (byte) Mathf.Clamp(Mathf.RoundToInt((MCUBlock.QuantizationTable[i] * S + 50f) / 100f), 1, 255);
         }
         
-        quantTable2 = new byte[64];
+        chromaQuantTable = new byte[64];
         for (int i = 0; i < 64; i++)
         {
-            quantTable2[i] = (byte) Mathf.Clamp(Mathf.RoundToInt((MCUBlock.highCompressionLumaQuant[i] * S + 50f) / 100f), 1, 255);
+            chromaQuantTable[i] = (byte) Mathf.Clamp(Mathf.RoundToInt((MCUBlock.highCompressionLumaQuant[i] * S + 50f) / 100f), 1, 255);
         }
     }
     

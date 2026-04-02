@@ -1,4 +1,3 @@
-using System;
 using Unity.Collections.LowLevel.Unsafe;
 using UnityEngine;
 
@@ -241,6 +240,9 @@ public unsafe struct JpegHeader
 
         public void Fill(byte[] quant)
         {
+            // rearrange for reading in the order ( i, i+32, (i+1), (i+1)+32, ... )
+            //quant = JpegHelpers.PackBlockForShader(quant);
+            
             // clone array
             fixed (byte* sourcePtr = quant)
                 for (int i=0; i<64; i++)
@@ -320,14 +322,10 @@ public unsafe struct JpegHeader
         width  = (uint)jpeg.width;
         height = (uint)jpeg.height;
         totalBits = jpeg.exactBits;
+        numMCUs = jpeg.numMCUs;
         
-        if (jpeg.format == JpegData.Format.YUV420)
-            numMCUs = JpegHelpers.DivRoundUp(width, 16u) * JpegHelpers.DivRoundUp(height, 16u);
-        else
-            numMCUs = JpegHelpers.DivRoundUp(width, 8u) * JpegHelpers.DivRoundUp(height, 8u);
-        
-        luminance.Fill(jpeg.quantTable);
-        chroma.Fill(jpeg.quantTable2);
+        luminance.Fill(jpeg.lumaninceQuantTable);
+        chroma.Fill(jpeg.chromaQuantTable);
         
         dcHuffmanTable.Fill(jpeg.huffmanDC);
         acHuffmanTable.Fill(jpeg.huffmanAC);

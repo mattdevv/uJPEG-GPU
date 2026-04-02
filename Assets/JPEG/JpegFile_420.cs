@@ -153,11 +153,11 @@ public partial class JpegData
         };
         
         float* quantAAN = stackalloc float[N*N];   
-        fixed (byte* rawQuant = quantTable)
+        fixed (byte* rawQuant = lumaninceQuantTable)
             GetQuantizationTableAAN(rawQuant, quantAAN);
         
         float* quantAAN2 = stackalloc float[N*N];   
-        fixed (byte* rawQuant = quantTable2)
+        fixed (byte* rawQuant = chromaQuantTable)
             GetQuantizationTableAAN(rawQuant, quantAAN2);
         
         int numMCUsX = JpegHelpers.DivRoundUp(width, 2 * N);
@@ -417,8 +417,8 @@ public partial class JpegData
         fixed (byte* codeLengthsDC = huffmanDC.lengthCounts)
         fixed (byte* symbolsAC = huffmanAC.symbols)
         fixed (byte* codeLengthsAC = huffmanAC.lengthCounts)
-        fixed (byte* quantAAN = quantTable)
-        fixed (byte* quantAAN2 = quantTable2)
+        fixed (byte* quantAAN = lumaninceQuantTable)
+        fixed (byte* quantAAN2 = chromaQuantTable)
         {
             RawImageData imageData = new RawImageData()
             {
