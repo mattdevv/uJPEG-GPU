@@ -4,16 +4,16 @@ Optimised Unity package to turn `Texture2D`'s into a custom JPEG *like* format t
 
 Why use this? Storing textures as JPEGs bitstreams in VRAM allows higher compression ratios than traditional formats and smaller sizes, at the cost of needing a decoding pass before use.
 
-How is GPU compression implemented? A bit offset to each JPEG MCU in the bitstream is stored and no delta compression is used between MCUs. With both of these techniques any MCU can be decoded without dependancies like is usual in the JPEG format. There is an additional overhead for the extra stored data of about 2.222 
+How is GPU compression implemented? A bit offset to each JPEG MCU in the bitstream is stored and no delta compression is used between MCUs. With both of these techniques any MCU can be decoded without dependancies like is usual in the JPEG format. There is an additional overhead for the extra stored data of about 2.222 bytes per MCU.
 
 __________________________
 ### Usage
-Select one or more Texture2D assets in the project browser and then in the menu bar go to 'MyTools/Process Selected Textures'. A window will appear and allow you to convert the selected textures into a scriptable object. These objects contain a `JpegData` instance which is CPU decompressable, or it can be converted to a `JpegBuffer` which is GPU decodable. See scripts 'JpegTest.cs' and 'GPUTest.cs' for examples of each.
+Select one or more Texture2D assets in the project browser and then in the menu bar go to 'MyTools/Process Selected Textures'. A window will appear and allow you to convert the selected textures into a scriptable object. These objects contain a `JpegData` instance which is CPU decompressable, or they can be converted to a `JpegBuffer` which is GPU decodable. See scripts 'JpegTest.cs' and 'GPUTest.cs' for examples of each.
 __________________________
 # Performance
 - Testing was performed on an AMD 7950X CPU and NVIDIA RTX 4090 GPU. 
 - YUV422 subsampling was enabled, and 16-bit AC codes was enabled.
-- Compression is final size as a percentage of uncompressed size.  
+- Compression is measured as final size as a percentage of uncompressed size.  
 
 Two images are used for testing: 
 - A 1080x1920 scale/crop of [Image 1](https://images.nasa.gov/details/NHQ202603290004)
@@ -24,21 +24,21 @@ Two images are used for testing:
 | Quality | 1080p || 16k ||
 |-:|-:|-:|-:|-:|
 | | Compression (%) | Time (ms) | Compression (%) | Time (ms) |
-|  25 |  2.56 | 16.76 |  2.19 | 2146.23 |
-|  50 |  3.82 | 17.84 |  3.26 | 2255.36 |
-|  75 |  5.48 | 19.24 |  4.74 | 2418.90 |
-| 100 | 24.74 | 31.50 | 24.52 | 4341.73 |
+|  25 |  2.56 | 15.96 |  2.19 | 2007.17 |
+|  50 |  3.82 | 16.98 |  3.26 | 2114.12 |
+|  75 |  5.48 | 18.45 |  4.74 | 2270.18 |
+| 100 | 24.74 | 30.21 | 24.52 | 4197.40 |
 
 ### Decode Time (ms)
 | Quality | CPU || GPU||
 |-:|-:|:-:|-:|-:|
 | | 1080p | 16k | 1080p | 16k|
-|  25 |  6.602 |  975.528 | 0.032 | 2.664 |
-|  50 |  7.518 | 1073.159 | 0.040 | 3.214 |
-|  75 |  8.707 | 1218.612 | 0.051 | 4.012 |
-| 100 | 21.636 | 3149.584 | 0.135 | 16.580|
+|  25 |   5.056 |  772.422 | 0.031 | 2.539 |
+|  50 |   6.011 |  866.248 | 0.039 | 3.069 |
+|  75 |   7.395 | 1012.114 | 0.049 | 3.864 |
+| 100 | 20.164 | 2972.884 | 0.132 | 16.432|
 
-Note: the CPU decode performance can be improved by ~12% when using the 12-bit AC codes mode and its LUT.
+Note: the CPU decode performance can be improved by upto 50% (at 100% quality) if using 12-bit AC codes mode (internals use LUT).
 __________________________
 ### Supports:
 - CPU Encoding
