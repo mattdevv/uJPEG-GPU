@@ -261,13 +261,15 @@ public partial class JpegData
         1.0f, 0.785694958f, 0.541196100f, 0.275899379f
     };
     
-    private static unsafe void GetQuantizationTableAAN(byte* rawTable, float* outTable)
+    // calculated the reciprocal and applies any factors
+    private static unsafe void PreprocessQuantizationTable(byte* rawTable, float* outTable)
     {
         for (int u = 0; u < 8; u++)
         for (int v = 0; v < 8; v++)
         {
             int i = v + u * 8;
-            double factor = 1.0 / (8.0 * scaleFactorAAN[u] * scaleFactorAAN[v]);
+            //double factor = 1.0 / (8.0 * scaleFactorAAN[u] * scaleFactorAAN[v]); // use this for the AAN DCT
+            double factor = 0.125;
             outTable[i] = (float)(factor / rawTable[i]);
         }
     }
@@ -307,7 +309,7 @@ public partial class JpegData
             }
 
             uint encodedSize = BitsRequired(nextValue);
-            Debug.Assert(encodedSize <= 11); // AC should be in range [-1024, 1023]
+            Debug.Assert(encodedSize <= 11, encodedSize); // AC should be in range [-1024, 1023]
 
             PackACSymbol(leadingZeros, encodedSize, out uint symbol);
             ++acHistogram[symbol];

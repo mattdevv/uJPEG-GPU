@@ -72,4 +72,13 @@ public class TestGPU : MonoBehaviour
         runtimeRT.Release();
         runtimeRT = null;
     }
+
+    [Button]
+    private void ApplyToMaterial()
+    {
+        if (material == null || runtimeRT == null)
+            return;
+        
+        material.mainTexture = runtimeRT; 
+    }
 }

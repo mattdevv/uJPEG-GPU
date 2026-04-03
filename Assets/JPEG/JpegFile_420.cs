@@ -107,8 +107,6 @@ public partial class JpegData
         
         for (uint i = 0; i < numMCUs; i++)
         {
-            FetchMCU_420(imageData, mcuPtr, i);
-            
             uint mod = i % 9u;
             if (mod > 0) // write 16-bit relative offset to last exact offset
             {
@@ -127,6 +125,7 @@ public partial class JpegData
                 offsetStoreAddr += sizeof(uint);
             }
 
+            FetchMCU_420(imageData, mcuPtr, i);
             // encode chroma blue
             EncodeBlockToStream(writePtr, writeIndex, mcuPtr + (4 * N * N), quant_Cb, &lastDC_Cb, dcLUT, acLUT);
             lastDC_Cb = 0;
@@ -154,11 +153,11 @@ public partial class JpegData
         
         float* quantAAN = stackalloc float[N*N];   
         fixed (byte* rawQuant = lumaninceQuantTable)
-            GetQuantizationTableAAN(rawQuant, quantAAN);
+            PreprocessQuantizationTable(rawQuant, quantAAN);
         
         float* quantAAN2 = stackalloc float[N*N];   
         fixed (byte* rawQuant = chromaQuantTable)
-            GetQuantizationTableAAN(rawQuant, quantAAN2);
+            PreprocessQuantizationTable(rawQuant, quantAAN2);
         
         int numMCUsX = JpegHelpers.DivRoundUp(width, 2 * N);
         int numMCUsY = JpegHelpers.DivRoundUp(height, 2 * N);
@@ -279,20 +278,45 @@ public partial class JpegData
             if (endY > imageData->height)
                 endY = imageData->height;
             
-            for (int x = 0; x < 16; x++)
-            for (int y = 0; y < 16; y++)
+            for (int x = 0; x < 16; x += 2)
+            for (int y = 0; y < 16; y += 2)
             {
-                int lumaIndex = ((x & 8) * 8) + ((y & 8) * 16) + (x & 7) + ((y & 7) * 8);
                 int chromaIndex = (x >> 1) + (y >> 1) * 8;
-                color[0] = tempSpacePtrF[lumaIndex];
-                color[1] = tempSpacePtrF[N*N*4 + chromaIndex];
-                color[2] = tempSpacePtrF[N*N*5 + chromaIndex];
+                float Cb = tempSpacePtrF[N*N*4 + chromaIndex];
+                float Cr = tempSpacePtrF[N*N*5 + chromaIndex];
+                color[0] = 128.5f + 1.402f * Cr;
+                color[1] = 128.5f - 0.344136f * Cb - 0.714136f * Cr;
+                color[2] = 128.5f + 1.772f * Cb;
                 
-                JpegHelpers.YCbCrToRgb_LvlShift(color);
-                
-                mcu[(x + y * 16) * 4 + 0] = (byte)math.clamp(color[0] + 0.5f, 0.5f, 255.5f);
-                mcu[(x + y * 16) * 4 + 1] = (byte)math.clamp(color[1] + 0.5f, 0.5f, 255.5f);
-                mcu[(x + y * 16) * 4 + 2] = (byte)math.clamp(color[2] + 0.5f, 0.5f, 255.5f);
+                // optimized to share CbCr for 4 writes
+                // bottom left
+                int lumaIndex = ((x & 8) * 8) + ((y & 8) * 16) + (x & 7) + ((y & 7) * 8);
+                int outputIndex = (x + y * 16) * 4;
+                float Y = tempSpacePtrF[lumaIndex];
+                mcu[outputIndex + 0] = (byte)math.clamp(color[0] + Y, 0.5f, 255.5f);
+                mcu[outputIndex + 1] = (byte)math.clamp(color[1] + Y, 0.5f, 255.5f);
+                mcu[outputIndex + 2] = (byte)math.clamp(color[2] + Y, 0.5f, 255.5f);
+                // bottom right
+                lumaIndex += 1;
+                outputIndex += 1 * 4;
+                Y = tempSpacePtrF[lumaIndex];
+                mcu[outputIndex + 0] = (byte)math.clamp(color[0] + Y, 0.5f, 255.5f);
+                mcu[outputIndex + 1] = (byte)math.clamp(color[1] + Y, 0.5f, 255.5f);
+                mcu[outputIndex + 2] = (byte)math.clamp(color[2] + Y, 0.5f, 255.5f);
+                // top left
+                lumaIndex += 7;
+                outputIndex += 15 * 4;
+                Y = tempSpacePtrF[lumaIndex];
+                mcu[outputIndex + 0] = (byte)math.clamp(color[0] + Y, 0.5f, 255.5f);
+                mcu[outputIndex + 1] = (byte)math.clamp(color[1] + Y, 0.5f, 255.5f);
+                mcu[outputIndex + 2] = (byte)math.clamp(color[2] + Y, 0.5f, 255.5f);
+                // top right
+                lumaIndex += 1;
+                outputIndex += 1 * 4;
+                Y = tempSpacePtrF[lumaIndex];
+                mcu[outputIndex + 0] = (byte)math.clamp(color[0] + Y, 0.5f, 255.5f);
+                mcu[outputIndex + 1] = (byte)math.clamp(color[1] + Y, 0.5f, 255.5f);
+                mcu[outputIndex + 2] = (byte)math.clamp(color[2] + Y, 0.5f, 255.5f);
             }
             
             uint outputWidth = endX - startX;
@@ -377,20 +401,45 @@ public partial class JpegData
             if (endY > imageData->height)
                 endY = imageData->height;
             
-            for (int x = 0; x < 16; x++)
-            for (int y = 0; y < 16; y++)
+            for (int x = 0; x < 16; x += 2)
+            for (int y = 0; y < 16; y += 2)
             {
-                int lumaIndex = ((x & 8) * 8) + ((y & 8) * 16) + (x & 7) + ((y & 7) * 8);
                 int chromaIndex = (x >> 1) + (y >> 1) * 8;
-                color[0] = tempSpacePtrF[lumaIndex];
-                color[1] = tempSpacePtrF[N*N*4 + chromaIndex];
-                color[2] = tempSpacePtrF[N*N*5 + chromaIndex];
+                float Cb = tempSpacePtrF[N*N*4 + chromaIndex];
+                float Cr = tempSpacePtrF[N*N*5 + chromaIndex];
+                color[0] = 128.5f + 1.402f * Cr;
+                color[1] = 128.5f - 0.344136f * Cb - 0.714136f * Cr;
+                color[2] = 128.5f + 1.772f * Cb;
                 
-                JpegHelpers.YCbCrToRgb_LvlShift(color);
-                
-                mcu[(x + y * 16) * 4 + 0] = (byte)math.clamp(color[0] + 0.5f, 0.5f, 255.5f);
-                mcu[(x + y * 16) * 4 + 1] = (byte)math.clamp(color[1] + 0.5f, 0.5f, 255.5f);
-                mcu[(x + y * 16) * 4 + 2] = (byte)math.clamp(color[2] + 0.5f, 0.5f, 255.5f);
+                // optimized to share CbCr for 4 writes
+                // bottom left
+                int lumaIndex = ((x & 8) * 8) + ((y & 8) * 16) + (x & 7) + ((y & 7) * 8);
+                int outputIndex = (x + y * 16) * 4;
+                float Y = tempSpacePtrF[lumaIndex];
+                mcu[outputIndex + 0] = (byte)math.clamp(color[0] + Y, 0.5f, 255.5f);
+                mcu[outputIndex + 1] = (byte)math.clamp(color[1] + Y, 0.5f, 255.5f);
+                mcu[outputIndex + 2] = (byte)math.clamp(color[2] + Y, 0.5f, 255.5f);
+                // bottom right
+                lumaIndex += 1;
+                outputIndex += 1 * 4;
+                Y = tempSpacePtrF[lumaIndex];
+                mcu[outputIndex + 0] = (byte)math.clamp(color[0] + Y, 0.5f, 255.5f);
+                mcu[outputIndex + 1] = (byte)math.clamp(color[1] + Y, 0.5f, 255.5f);
+                mcu[outputIndex + 2] = (byte)math.clamp(color[2] + Y, 0.5f, 255.5f);
+                // top left
+                lumaIndex += 7;
+                outputIndex += 15 * 4;
+                Y = tempSpacePtrF[lumaIndex];
+                mcu[outputIndex + 0] = (byte)math.clamp(color[0] + Y, 0.5f, 255.5f);
+                mcu[outputIndex + 1] = (byte)math.clamp(color[1] + Y, 0.5f, 255.5f);
+                mcu[outputIndex + 2] = (byte)math.clamp(color[2] + Y, 0.5f, 255.5f);
+                // top right
+                lumaIndex += 1;
+                outputIndex += 1 * 4;
+                Y = tempSpacePtrF[lumaIndex];
+                mcu[outputIndex + 0] = (byte)math.clamp(color[0] + Y, 0.5f, 255.5f);
+                mcu[outputIndex + 1] = (byte)math.clamp(color[1] + Y, 0.5f, 255.5f);
+                mcu[outputIndex + 2] = (byte)math.clamp(color[2] + Y, 0.5f, 255.5f);
             }
             
             uint outputWidth = endX - startX;
@@ -445,6 +494,15 @@ public partial class JpegData
                 codes = codesAC,
                 lengthCounts = codeLengthsAC,
             };
+
+            /*float* lq = stackalloc float[64];
+            float* cq = stackalloc float[64];
+
+            for (int i = 0; i < 64; i++)
+            {
+                lq[i] =  quantAAN[i]  * 0.125f;
+                cq[i] = quantAAN2[i] * 0.125f;
+            }*/
 
             if (huffmanAC.longestCodeLength <= 12)
             {

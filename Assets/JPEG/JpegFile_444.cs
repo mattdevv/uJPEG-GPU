@@ -89,8 +89,6 @@ public partial class JpegData
         int lastDC_Cr = 0;
         for (uint i = 0; i < numMCUs; i++)
         {
-            FetchMCU_444(imageData, mcuPtr, i);
-            
             uint mod = i % 9u;
             if (mod > 0) // write 16-bit relative offset to last exact offset
             {
@@ -109,6 +107,7 @@ public partial class JpegData
                 offsetStoreAddr += sizeof(uint);
             }
 
+            FetchMCU_444(imageData, mcuPtr, i);
             EncodeBlockToStream(writePtr, writeIndex, mcuPtr, quant_L, &lastDC_Y, dcLUT, acLUT);
             lastDC_Y  = 0;
             EncodeBlockToStream(writePtr, writeIndex, mcuPtr + 64, quant_Cb, &lastDC_Cb, dcLUT, acLUT);
@@ -130,11 +129,11 @@ public partial class JpegData
         
         float* quantAAN = stackalloc float[N*N];   
         fixed (byte* rawQuant = lumaninceQuantTable)
-            GetQuantizationTableAAN(rawQuant, quantAAN);
+            PreprocessQuantizationTable(rawQuant, quantAAN);
         
         float* quantAAN2 = stackalloc float[N*N];   
         fixed (byte* rawQuant = chromaQuantTable)
-            GetQuantizationTableAAN(rawQuant, quantAAN2);
+            PreprocessQuantizationTable(rawQuant, quantAAN2);
         
         int numMCUsX = JpegHelpers.DivRoundUp(width, N);
         int numMCUsY = JpegHelpers.DivRoundUp(height, N);
