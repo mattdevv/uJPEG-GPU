@@ -1,4 +1,5 @@
 # uJPEG GPU
+![ezgif-894b5099c92c1c31](https://github.com/user-attachments/assets/5649c0be-d9a5-4c28-9e49-8a639813cf79)
 
 Optimised Unity package to turn `Texture2D`'s into a custom JPEG *like* format that achieves high compression ratio and is able to be decompressed on CPU or GPU. Compression follows standard JPEG pipeline and supports 1-channel or 3-channel SDR images with optional chroma downsampling.
 
@@ -8,7 +9,7 @@ How is GPU compression implemented? A bit offset to each JPEG MCU in the bitstre
 
 __________________________
 ### Usage
-Select one or more Texture2D assets in the project browser and then in the menu bar go to 'MyTools/Process Selected Textures'. A window will appear and allow you to convert the selected textures into a scriptable object. These objects contain a `JpegData` instance which is CPU decompressable, or they can be converted to a `JpegBuffer` which is GPU decodable. See scripts 'JpegTest.cs' and 'GPUTest.cs' for examples of each.
+Open the window found at 'Window/mattdevv/Convert Textures to JPEG', any selected Texture2Ds will be displayed in the window with a preview of the compression. At the bottom of the window you can choose where to save the created JPEGs and process them individually or use the same settings to process all selected Texture2Ds. The outputted objects contain a `JpegData` instance which is CPU decompressable, or they can be converted to a `JpegBuffer` which is GPU decodable. See scripts 'JpegTest.cs' and 'GPUTest.cs' for examples of each.
 __________________________
 # Performance
 - Testing was performed on an AMD 7950X CPU and NVIDIA RTX 4090 GPU. 
