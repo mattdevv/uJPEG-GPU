@@ -1,0 +1,296 @@
+#pragma kernel Jpegify444 GROUPSHAREDSIZE=192 // 64*3
+
+#if !defined(GROUPSHAREDSIZE)
+    #define GROUPSHAREDSIZE 1024
+#endif
+
+groupshared int mcuBlockData[GROUPSHAREDSIZE];
+
+Texture2D _InputTex;
+RWTexture2D<float4> _OutputTex;
+ByteAddressBuffer _QuantTables;
+
+int _ImageWidth;
+int _ImageHeight;
+bool _IsSRGB;
+
+//
+// sRGB transfer functions
+// Fast path ref: http://chilliant.blogspot.com.au/2012/08/srgb-approximations-for-hlsl.html?m=1
+//
+half SRGBToLinear(half c)
+{
+    #if USE_VERY_FAST_SRGB
+    return c * c;
+    #elif USE_FAST_SRGB
+    return c * (c * (c * 0.305306011 + 0.682171111) + 0.012522878);
+    #else
+    half linearRGBLo = c / 12.92;
+    half linearRGBHi = pow((c + 0.055) / 1.055, 2.4);
+    half linearRGB = (c <= 0.04045) ? linearRGBLo : linearRGBHi;
+    return linearRGB;
+    #endif
+}
+
+half3 SRGBToLinear(half3 c)
+{
+    #if USE_VERY_FAST_SRGB
+    return c * c;
+    #elif USE_FAST_SRGB
+    return c * (c * (c * 0.305306011 + 0.682171111) + 0.012522878);
+    #else
+    half3 linearRGBLo = c / 12.92;
+    half3 linearRGBHi = pow((c + 0.055) / 1.055, half3(2.4, 2.4, 2.4));
+    half3 linearRGB = (c <= 0.04045) ? linearRGBLo : linearRGBHi;
+    return linearRGB;
+    #endif
+}
+
+half4 SRGBToLinear(half4 c)
+{
+    return half4(SRGBToLinear(c.rgb), c.a);
+}
+
+half LinearToSRGB(half c)
+{
+    #if USE_VERY_FAST_SRGB
+    return sqrt(c);
+    #elif USE_FAST_SRGB
+    return max(1.055 * pow(c, 0.416666667) - 0.055, 0.0);
+    #else
+    half sRGBLo = c * 12.92;
+    half sRGBHi = (pow(c, 1.0 / 2.4) * 1.055) - 0.055;
+    half sRGB = (c <= 0.0031308) ? sRGBLo : sRGBHi;
+    return sRGB;
+    #endif
+}
+
+half3 LinearToSRGB(half3 c)
+{
+    #if USE_VERY_FAST_SRGB
+    return sqrt(c);
+    #elif USE_FAST_SRGB
+    return max(1.055 * pow(c, 0.416666667) - 0.055, 0.0);
+    #else
+    half3 sRGBLo = c * 12.92;
+    half3 sRGBHi = (pow(c, half3(1.0 / 2.4, 1.0 / 2.4, 1.0 / 2.4)) * 1.055) - 0.055;
+    half3 sRGB = (c <= 0.0031308) ? sRGBLo : sRGBHi;
+    return sRGB;
+    #endif
+}
+
+half4 LinearToSRGB(half4 c)
+{
+    return half4(LinearToSRGB(c.rgb), c.a);
+}
+
+float3 RgbToYCbCr(float3 rgb)
+{
+    float r = rgb.r;
+    float g = rgb.g;
+    float b = rgb.b;
+        
+    float Y  =  0.299 * r + 0.587 * g + 0.114 * b +   0.;
+    float Cb = -0.169 * r - 0.331 * g + 0.500 * b +  0.5;
+    float Cr =  0.500 * r - 0.419 * g - 0.081 * b +  0.5;
+    
+    return float3(Y, Cb, Cr);
+}
+
+float3 YCbCrToRgb(float3 c)
+{
+    float Y  = c.x -   0.;
+    float Cb = c.y -  0.5;
+    float Cr = c.z -  0.5;
+
+    float r = Y + 1.402f * Cr;
+    float g = Y - 0.344136f * Cb - 0.714136f * Cr;
+    float b = Y + 1.772f * Cb;
+        
+    return float3(r, g, b);
+}
+
+void CUDAsubroutineInplaceDCTvector(uint base, uint step)
+{
+    const float C_a = 1.387039845322148f; //!< a = (2^0.5) * cos(    pi / 16);  Used in forward and inverse DCT.
+    const float C_b = 1.306562964876377f; //!< b = (2^0.5) * cos(    pi /  8);  Used in forward and inverse DCT.
+    const float C_c = 1.175875602419359f; //!< c = (2^0.5) * cos(3 * pi / 16);  Used in forward and inverse DCT.
+    const float C_d = 0.785694958387102f; //!< d = (2^0.5) * cos(5 * pi / 16);  Used in forward and inverse DCT.
+    const float C_e = 0.541196100146197f; //!< e = (2^0.5) * cos(3 * pi /  8);  Used in forward and inverse DCT.
+    const float C_f = 0.275899379282943f; //!< f = (2^0.5) * cos(7 * pi / 16);  Used in forward and inverse DCT.
+    const float C_norm = 0.3535533905932737f; // 1 / (8^0.5) 
+
+    float Vect0 = asfloat(mcuBlockData[base + step * 0]);
+    float Vect1 = asfloat(mcuBlockData[base + step * 1]);
+    float Vect2 = asfloat(mcuBlockData[base + step * 2]);
+    float Vect3 = asfloat(mcuBlockData[base + step * 3]);
+    float Vect4 = asfloat(mcuBlockData[base + step * 4]);
+    float Vect5 = asfloat(mcuBlockData[base + step * 5]);
+    float Vect6 = asfloat(mcuBlockData[base + step * 6]);
+    float Vect7 = asfloat(mcuBlockData[base + step * 7]);
+
+    float X07P = (Vect0) + (Vect7);
+    float X16P = (Vect1) + (Vect6);
+    float X25P = (Vect2) + (Vect5);
+    float X34P = (Vect3) + (Vect4);
+
+    float X07M = (Vect0) - (Vect7);
+    float X61M = (Vect6) - (Vect1);
+    float X25M = (Vect2) - (Vect5);
+    float X43M = (Vect4) - (Vect3);
+
+    float X07P34PP = X07P + X34P;
+    float X07P34PM = X07P - X34P;
+    float X16P25PP = X16P + X25P;
+    float X16P25PM = X16P - X25P;
+
+    mcuBlockData[base + step * 0] = asint(C_norm * (X07P34PP + X16P25PP));
+    mcuBlockData[base + step * 2] = asint(C_norm * (C_b * X07P34PM + C_e * X16P25PM));
+    mcuBlockData[base + step * 4] = asint(C_norm * (X07P34PP - X16P25PP));
+    mcuBlockData[base + step * 6] = asint(C_norm * (C_e * X07P34PM - C_b * X16P25PM));
+    mcuBlockData[base + step * 1] = asint(C_norm * (C_a * X07M - C_c * X61M + C_d * X25M - C_f * X43M));
+    mcuBlockData[base + step * 3] = asint(C_norm * (C_c * X07M + C_f * X61M - C_a * X25M + C_d * X43M));
+    mcuBlockData[base + step * 5] = asint(C_norm * (C_d * X07M + C_a * X61M + C_f * X25M - C_c * X43M));
+    mcuBlockData[base + step * 7] = asint(C_norm * (C_f * X07M + C_d * X61M + C_c * X25M + C_a * X43M));
+}
+
+void CUDAsubroutineInplaceIDCTvector(uint base, uint step)
+{
+    const float C_a = 1.387039845322148f; //!< a = (2^0.5) * cos(    pi / 16);  Used in forward and inverse DCT.
+    const float C_b = 1.306562964876377f; //!< b = (2^0.5) * cos(    pi /  8);  Used in forward and inverse DCT.
+    const float C_c = 1.175875602419359f; //!< c = (2^0.5) * cos(3 * pi / 16);  Used in forward and inverse DCT.
+    const float C_d = 0.785694958387102f; //!< d = (2^0.5) * cos(5 * pi / 16);  Used in forward and inverse DCT.
+    const float C_e = 0.541196100146197f; //!< e = (2^0.5) * cos(3 * pi /  8);  Used in forward and inverse DCT.
+    const float C_f = 0.275899379282943f; //!< f = (2^0.5) * cos(7 * pi / 16);  Used in forward and inverse DCT.
+    const float C_norm = 0.3535533905932737f; // 1 / (8^0.5)
+    
+    float Vect0 = asfloat(mcuBlockData[base + step * 0]);
+    float Vect1 = asfloat(mcuBlockData[base + step * 1]);
+    float Vect2 = asfloat(mcuBlockData[base + step * 2]);
+    float Vect3 = asfloat(mcuBlockData[base + step * 3]);
+    float Vect4 = asfloat(mcuBlockData[base + step * 4]);
+    float Vect5 = asfloat(mcuBlockData[base + step * 5]);
+    float Vect6 = asfloat(mcuBlockData[base + step * 6]);
+    float Vect7 = asfloat(mcuBlockData[base + step * 7]);
+
+    float Y04P = (Vect0) + (Vect4);
+    float Y2b6eP = C_b * (Vect2) + C_e * (Vect6);
+
+    float Y04P2b6ePP = Y04P + Y2b6eP;
+    float Y04P2b6ePM = Y04P - Y2b6eP;
+    float Y7f1aP3c5dPP = C_f * (Vect7) + C_a * (Vect1) + C_c * (Vect3) + C_d * (Vect5);
+    float Y7a1fM3d5cMP = C_a * (Vect7) - C_f * (Vect1) + C_d * (Vect3) - C_c * (Vect5);
+
+    float Y04M = (Vect0) - (Vect4);
+    float Y2e6bM = C_e * (Vect2) - C_b * (Vect6);
+
+    float Y04M2e6bMP = Y04M + Y2e6bM;
+    float Y04M2e6bMM = Y04M - Y2e6bM;
+    float Y1c7dM3f5aPM = C_c * (Vect1) - C_d * (Vect7) - C_f * (Vect3) - C_a * (Vect5);
+    float Y1d7cP3a5fMM = C_d * (Vect1) + C_c * (Vect7) - C_a * (Vect3) + C_f * (Vect5);
+
+    mcuBlockData[base + step * 0] = asint(C_norm * (Y04P2b6ePP + Y7f1aP3c5dPP));
+    mcuBlockData[base + step * 7] = asint(C_norm * (Y04P2b6ePP - Y7f1aP3c5dPP));
+    mcuBlockData[base + step * 4] = asint(C_norm * (Y04P2b6ePM + Y7a1fM3d5cMP));
+    mcuBlockData[base + step * 3] = asint(C_norm * (Y04P2b6ePM - Y7a1fM3d5cMP));
+    mcuBlockData[base + step * 1] = asint(C_norm * (Y04M2e6bMP + Y1c7dM3f5aPM));
+    mcuBlockData[base + step * 5] = asint(C_norm * (Y04M2e6bMM - Y1d7cP3a5fMM));
+    mcuBlockData[base + step * 2] = asint(C_norm * (Y04M2e6bMM + Y1d7cP3a5fMM));
+    mcuBlockData[base + step * 6] = asint(C_norm * (Y04M2e6bMP - Y1c7dM3f5aPM));
+}
+
+void fdct8x8(uint lane, uint offset)
+{
+    if (lane < 8)
+    {
+        // DCT: columns
+        CUDAsubroutineInplaceDCTvector(offset + lane, 8);
+    	// DCT: rows
+    	CUDAsubroutineInplaceDCTvector(offset + lane * 8, 1);
+	}
+}
+
+void idct8x8(uint lane, uint offset)
+{
+	if (lane < 8)
+	{
+	    // IDCT: columns
+	    CUDAsubroutineInplaceIDCTvector(offset + lane, 8);
+		// IDCT: rows
+		CUDAsubroutineInplaceIDCTvector(offset + lane * 8, 1);
+	}
+}
+
+//
+// RGB / Full-range YCbCr conversions (ITU-R BT.601)
+//
+float3 RgbToYCbCr2(float3 c)
+{
+    float Y  = +0.299 * c.r + 0.587 * c.g + 0.114 * c.b;
+    float Cb = -0.169 * c.r - 0.331 * c.g + 0.500 * c.b;
+    float Cr = +0.500 * c.r - 0.419 * c.g - 0.081 * c.b;
+    return float3(Y, Cb, Cr);
+}
+
+float3 YCbCrToRgb2(float3 c)
+{
+    float R = c.x + 0.000 * c.y + 1.403 * c.z;
+    float G = c.x - 0.344 * c.y - 0.714 * c.z;
+    float B = c.x + 1.773 * c.y + 0.000 * c.z;
+    
+    return float3(R, G, B);
+}
+
+[numthreads(8,8,1)]
+void Jpegify444 (uint3 tid : SV_GroupThreadID, uint3 gid : SV_GroupID)
+{
+    uint2 pixelCoord = gid.xy * 8 + tid.xy;
+    uint index = tid.x + (tid.y * 8);
+    uint2 resolution = asuint(int2(_ImageWidth, _ImageHeight));
+    
+    float quantL = asfloat(_QuantTables.Load(index * 4));
+    float quantC = asfloat(_QuantTables.Load(index * 4 + (64 * 4)));
+
+    // load data into shared memory
+    float4 inputRGBA = all(pixelCoord < resolution) ? _InputTex[pixelCoord] : 0.5;
+    if (_IsSRGB) inputRGBA = LinearToSRGB(inputRGBA);
+    float3 inputYCbCr = RgbToYCbCr(inputRGBA.rgb) * 256. - 128.;
+    
+    // each thread converts 1 pixel to YCbCr
+    mcuBlockData[index + 64 * 0] = asint(inputYCbCr.x);
+    mcuBlockData[index + 64 * 1] = asint(inputYCbCr.y);
+    mcuBlockData[index + 64 * 2] = asint(inputYCbCr.z);
+	AllMemoryBarrierWithGroupSync();
+
+    // do FDCT
+	fdct8x8(index, 0 * 64);
+	fdct8x8(index, 1 * 64);
+	fdct8x8(index, 2 * 64);
+	AllMemoryBarrierWithGroupSync();
+
+    float Y  = asfloat(mcuBlockData[index + 64 * 0]);
+    float Cb = asfloat(mcuBlockData[index + 64 * 1]);
+    float Cr = asfloat(mcuBlockData[index + 64 * 2]);
+    
+    // quantize
+    mcuBlockData[index + 64 * 0] = asint(round(Y  / quantL) * quantL);
+    mcuBlockData[index + 64 * 1] = asint(round(Cb / quantC) * quantC);
+    mcuBlockData[index + 64 * 2] = asint(round(Cr / quantC) * quantC);
+	AllMemoryBarrierWithGroupSync();
+
+    // do IDCT
+	idct8x8(index, 0 * 64);
+	idct8x8(index, 1 * 64);
+	idct8x8(index, 2 * 64);
+	AllMemoryBarrierWithGroupSync();
+
+    // each thread converts 1 pixel back to rgb and writes
+    float3 outputYCbCr = (128./255.) + (1./256.) * float3(
+        asfloat(mcuBlockData[index + 64 * 0]),
+        asfloat(mcuBlockData[index + 64 * 1]),
+        asfloat(mcuBlockData[index + 64 * 2]));
+    float3 outputRGB = saturate(YCbCrToRgb(outputYCbCr));
+    
+    if (all(pixelCoord < resolution))
+        _OutputTex[pixelCoord] = float4(outputRGB, 1.);
+}

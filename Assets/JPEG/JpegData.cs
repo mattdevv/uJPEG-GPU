@@ -93,7 +93,8 @@ public partial class JpegData
 #if MATTDEVV_JPEG_TIMER
         MyTimer encodeTimer = new MyTimer("Encode");
 #endif
-        CreateScaledQuantTables(quality);
+        lumaninceQuantTable = CreateScaledQuantTables(MCUBlock.QuantizationTable, quality);
+        chromaQuantTable = CreateScaledQuantTables(MCUBlock.highCompressionLumaQuant, quality);
         
         if (imageChannels == 1)
         {
@@ -235,7 +236,7 @@ public partial class JpegData
         }
     }
     
-    private void CreateScaledQuantTables(int quality)
+    public static byte[] CreateScaledQuantTables(byte[] quantTable, int quality)
     {
         quality = Mathf.Clamp(quality, 1, 100);
         
@@ -243,17 +244,12 @@ public partial class JpegData
         if (quality < 50) S = 5000 / quality;
         else              S = 200 - (quality * 2);
         
-        lumaninceQuantTable = new byte[64];
+        byte[] scaledTable = new byte[64];
         for (int i = 0; i < 64; i++)
         {
-            lumaninceQuantTable[i] = (byte) Mathf.Clamp(Mathf.RoundToInt((MCUBlock.QuantizationTable[i] * S + 50f) / 100f), 1, 255);
+            scaledTable[i] = (byte) Mathf.Clamp(Mathf.RoundToInt((quantTable[i] * S + 50f) / 100f), 1, 255);
         }
-        
-        chromaQuantTable = new byte[64];
-        for (int i = 0; i < 64; i++)
-        {
-            chromaQuantTable[i] = (byte) Mathf.Clamp(Mathf.RoundToInt((MCUBlock.highCompressionLumaQuant[i] * S + 50f) / 100f), 1, 255);
-        }
+        return scaledTable;
     }
     
     private static readonly float[] scaleFactorAAN = {

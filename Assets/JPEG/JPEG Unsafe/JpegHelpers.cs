@@ -131,13 +131,13 @@ public class JpegHelpers
         float g = c[1];
         float b = c[2];
         
-        float Y  =  0.299f * r + 0.587f * g + 0.114f * b;
-        float Cb = -0.169f * r - 0.331f * g + 0.500f * b;
-        float Cr =  0.500f * r - 0.419f * g - 0.081f * b;
+        float Y  =  0.299f * r + 0.587f * g + 0.114f * b - 128f;
+        float Cb = -0.169f * r - 0.331f * g + 0.500f * b - 0f;
+        float Cr =  0.500f * r - 0.419f * g - 0.081f * b - 0f;
         
-        c[0] =  Y - 128f;
-        c[1] = Cb + 0f;
-        c[2] = Cr + 0f;
+        c[0] =  Y;
+        c[1] = Cb;
+        c[2] = Cr;
     }
 
     public static unsafe void YCbCrToRgb(byte* c, float* color)

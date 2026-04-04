@@ -1,9 +1,13 @@
+using System;
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEditor;
 using System.IO;
+using Unity.Collections.LowLevel.Unsafe;
+using UnityEngine.Experimental.Rendering;
+using Object = UnityEngine.Object;
 
-public class TextureProcessorWindow : EditorWindow
+public class JpegProcessorWindow : EditorWindow
 {
     private List<Texture2D> texturesToProcess = new List<Texture2D>();
     private int currentIndex = 0;
@@ -16,6 +20,14 @@ public class TextureProcessorWindow : EditorWindow
 
     // --- Path Settings ---
     private string overrideFolderPath = "";
+
+    // --- Preview Settings ---
+    private static ComputeShader previewCompute;
+    private GraphicsBuffer quantBuffer;
+    private RenderTexture previewTexture;
+    private Texture2D previewTarget;
+    private int previewQuality;
+    private bool previewDownsample;
 
     private string GetPathForTexture(Texture2D texture)
     {
@@ -38,7 +50,7 @@ public class TextureProcessorWindow : EditorWindow
     {
         if (texturesToProcess.Count == 0 || currentIndex >= texturesToProcess.Count)
         {
-            EditorGUILayout.HelpBox("No textures loaded or processing complete.", MessageType.Info);
+            EditorGUILayout.HelpBox("Error no textures loaded or processing complete.", MessageType.Info);
             if (GUILayout.Button("Close")) 
                 Close();
             return;
@@ -52,8 +64,13 @@ public class TextureProcessorWindow : EditorWindow
         EditorGUILayout.Space(10);
 
         // --- Image Preview ---
+        // only update texture when it changes
+        if (previewTarget != currentTex || previewQuality != quality || previewDownsample != downsampleChroma)
+        {
+            UpdatePreview(currentTex);
+        }
         Rect textureRect = GUILayoutUtility.GetRect(10, 10, GUILayout.ExpandWidth(true), GUILayout.ExpandHeight(true));
-        EditorGUI.DrawPreviewTexture(textureRect, currentTex, null, ScaleMode.ScaleToFit);
+        EditorGUI.DrawPreviewTexture(textureRect, previewTexture, null, ScaleMode.ScaleToFit);
 
         EditorGUILayout.Space(10);
 
@@ -121,19 +138,118 @@ public class TextureProcessorWindow : EditorWindow
 
         if (GUILayout.Button("Next Image", GUILayout.Height(30)))
         {
-            if (MoveToNext() == false)
-                Close();
+            MoveToNext();
         }
 
-        if (GUILayout.Button("Process All", GUILayout.Height(30)))
+        if (GUILayout.Button($"Process All ({texturesToProcess.Count - currentIndex})", GUILayout.Height(30)))
         {
-            while (MoveToNext())
-                continue;
-            
-            Close();
+            while (MoveToNext()) ;
         }
 
         EditorGUILayout.EndHorizontal();
+    }
+
+    private void UpdatePreview(Texture2D target)
+    {
+        GraphicsFormat format = GraphicsFormatUtility.GetComponentCount(target.format) == 1 
+            ? GraphicsFormat.R8_UNorm 
+            : GraphicsFormat.R8G8B8A8_UNorm;
+
+        if (target.isDataSRGB)
+            format = GraphicsFormatUtility.GetSRGBFormat(format);
+        
+        // recreate texture if needed
+        if (previewTexture == null)
+        {
+            previewTexture = new RenderTexture(target.width, target.height, 0, format);
+            previewTexture.enableRandomWrite = true;
+        }
+        else if (previewTexture.width != target.width || previewTexture.height != target.height || format != previewTexture.graphicsFormat)
+        {
+            previewTexture.Release();
+            previewTexture = new RenderTexture(target.width, target.height, 0, format);
+            previewTexture.enableRandomWrite = true;
+        }
+        
+        var tableLuminance = JpegData.CreateScaledQuantTables(MCUBlock.QuantizationTable, quality);
+        float[] tempBuffer = new float[64];
+        for (int i = 0; i < 64; i++)
+        {
+            tempBuffer[i] = (float)tableLuminance[i];
+        }
+        quantBuffer.SetData(tempBuffer, 0, 0, 64);
+        var tableChroma = JpegData.CreateScaledQuantTables(MCUBlock.highCompressionLumaQuant, quality);
+        for (int i = 0; i < 64; i++)
+        {
+            tempBuffer[i] = (float)tableChroma[i];
+        }
+        quantBuffer.SetData(tempBuffer, 0, 64, 64);
+        
+        int kernelIndex = 0;
+        int mcuWidth = 8;
+        int mcuHeight = 8;
+        previewCompute.SetBuffer(kernelIndex, "_QuantTables", quantBuffer);
+        previewCompute.SetTexture(kernelIndex, "_InputTex", target);
+        previewCompute.SetTexture(kernelIndex, "_OutputTex", previewTexture);
+        previewCompute.SetInt("_ImageWidth", previewTexture.width);
+        previewCompute.SetInt("_ImageHeight", previewTexture.height);
+        previewCompute.SetBool("_IsSRGB", target.isDataSRGB);
+        previewCompute.Dispatch(kernelIndex, 
+            JpegHelpers.DivRoundUp(previewTexture.width, mcuWidth), 
+            JpegHelpers.DivRoundUp(previewTexture.height, mcuHeight),
+            1);
+
+        previewTarget = target;
+        previewQuality = quality;
+        previewDownsample = downsampleChroma;
+    }
+
+    private void OnEnable()
+    {
+        if (previewCompute == null)
+            previewCompute = AssetDatabase.LoadAssetByGUID<ComputeShader>(new GUID("e1d40a76918f1a44a936eda60c3eea39"));
+
+        quantBuffer = new GraphicsBuffer(GraphicsBuffer.Target.Raw, 64 * 3, sizeof(float));
+    }
+
+    private void OnSelectionChange()
+    {
+        List<Texture2D> selectedTextures = new();
+        
+        // check if at least one asset is a Texture2D
+        foreach (Object obj in Selection.objects)
+        {
+            if (obj is not Texture2D texture)
+                continue;
+
+            if (string.IsNullOrEmpty(AssetDatabase.GetAssetPath(texture)))
+                continue;
+
+            if (JpegHelpers.IsValidForJPEG(texture))
+            {
+                selectedTextures.Add(texture);
+            }
+        }
+        
+        texturesToProcess = selectedTextures;
+        currentIndex = 0;
+        
+        Repaint();
+    }
+
+    private void OnDisable()
+    {
+        if (quantBuffer != null)
+        {
+            quantBuffer.Release();
+            quantBuffer = null;
+        }
+        
+        if (previewTexture != null)
+        {
+            previewTexture.Release();
+            quantBuffer = null;
+        }
     }
 
     private void CreateAsset(Texture2D texture)
@@ -174,63 +290,18 @@ public class TextureProcessorWindow : EditorWindow
         
         if (++currentIndex >= texturesToProcess.Count)
         {
-            EditorUtility.DisplayDialog("Done!", "All textures have been processed.", "OK");
             return false;
         }
 
         return true;
     }
 
-    [MenuItem("MyTools/Process Selected Textures")]
+    [MenuItem("Window/mattdevv/Convert Textures to JPEG")]
     public static void OpenWindow()
     {
-        List<Texture2D> selectedTextures = new();
-        
-        // check if at least one asset is a Texture2D
-        foreach (Object obj in Selection.objects)
-        {
-            if (obj is not Texture2D texture)
-                continue;
-
-            if (string.IsNullOrEmpty(AssetDatabase.GetAssetPath(texture)))
-                continue;
-
-            if (JpegHelpers.IsValidForJPEG(texture))
-            {
-                selectedTextures.Add(texture);
-            }
-        }
-
-        if (selectedTextures.Count == 0)
-        {
-            EditorUtility.DisplayDialog("No Textures", "Please select at least one valid Texture2D asset.", "OK");
-            return;
-        }
-
-        TextureProcessorWindow window = GetWindow<TextureProcessorWindow>("Texture Processor");
-        window.texturesToProcess = selectedTextures;
+        JpegProcessorWindow window = GetWindow<JpegProcessorWindow>("Texture Processor");
+        window.texturesToProcess = new List<Texture2D>();
         window.currentIndex = 0;
         window.Show();
-    }
-
-    [MenuItem("MyTools/Process Selected Textures", true)]
-    public static bool ValidateOpenWindow()
-    {
-        // check if at least one asset is a Texture2D
-        foreach (Object obj in Selection.objects)
-        {
-            if (obj is not Texture2D texture)
-                continue;
-
-            if (string.IsNullOrEmpty(AssetDatabase.GetAssetPath(texture)))
-                continue;
-
-            if (JpegHelpers.IsValidForJPEG(texture))
-            {
-                return true;
-            }
-        }
-
-        return false;
     }
 }

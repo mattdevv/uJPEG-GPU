@@ -67,17 +67,19 @@ __________________________
 - 2 Huffman tables per image, 1 each for DC and AC symbols
 - 2 quantization tables for luminance/chroma values (possible to add a 3rd) 
 
-## Future Work:
-- Support other GPU manufacturers besides NVIDIA
-- Allow sharing Huffman-Tables between images to allow GPUs to use 1 optimised table to decode many images
-- Use a different MCU offset distribution for different compression formats, currently optimizes for YUV422
-- Add an optimized preview for judging quality loss without waiting for full encoding
-- Support for 2 and 4 color channels
-- More subsampling formats
-- Add GPU encoder
-- Add tools to create/select quantization tables
-- Add multithread CPU encoder/decoder using Unity's Jobs System
-- Cleanup the code into a distributable package
+## Future Work (in no order):
+- [ ] Support other GPU manufacturers besides NVIDIA
+- [ ] Allow sharing Huffman-Tables between images to allow GPUs to use 1 optimised table to decode many images
+- [ ] Use a different MCU offset distribution for different compression formats, currently optimizes for YUV422
+- [x] Add an optimized preview for previewing quality loss without waiting for full encoding
+- [ ] Add YUV422 to the preview mode
+- [ ] Support for 2 and 4 color channels
+- [ ] More subsampling formats
+- [ ] Add GPU encoder
+- [ ] Add tools to create/select quantization tables
+- [ ] Add multithread CPU encoder/decoder using Unity's Jobs System
+- [ ] Cleanup the code into a distributable package
+- [ ] Add thumbnails/previews to JpegAssets
 
 ## Special Thanks
 - Inspired after reading: [Variable-Rate Texture Compression: Real-Time Rendering with JPEG](https://arxiv.org/abs/2510.08166)

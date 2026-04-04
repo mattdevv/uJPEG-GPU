@@ -56,9 +56,9 @@ public static class MCUBlock
     {
         for (int i = 0; i < 64; i++)
         {
-            int index = ZigZagLUT[i];
+            int zigzagIndex = ZigZagLUT[i];
             float value = input[i] * quantRcp[i];
-            output[index] = (short)math.round(value);
+            output[zigzagIndex] = (short)math.round(value);
         }
     }
     
