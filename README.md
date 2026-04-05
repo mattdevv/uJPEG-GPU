@@ -32,14 +32,14 @@ Two images are used for testing:
 
 ### Decode Time (ms)
 | Quality | CPU || GPU||
-|-:|-:|:-:|-:|-:|
-| | 1080p | 16k | 1080p | 16k|
-|  25 |   5.056 |  772.422 | 0.031 | 2.539 |
-|  50 |   6.011 |  866.248 | 0.039 | 3.069 |
-|  75 |   7.395 | 1012.114 | 0.049 | 3.864 |
-| 100 | 20.164 | 2972.884 | 0.132 | 16.432|
+|-:|-:|-:|-:|-:|
+|     |  1080p |      16k | 1080p |     16k|
+|  25 |  5.056 |  772.422 | 0.031 |  2.539 |
+|  50 |  6.011 |  866.248 | 0.039 |  3.069 |
+|  75 |  7.395 | 1012.114 | 0.049 |  3.864 |
+| 100 | 20.164 | 2972.884 | 0.132 | 16.432 |
 
-Note: the CPU decode performance can be improved by upto 50% (at 100% quality) if using 12-bit AC codes mode (internals use LUT).
+Note: the CPU decode speed increases up-to double (when at 100% quality) if using 12-bit AC codes mode (internally can use LUT).
 __________________________
 ### Supports:
 - CPU Encoding
