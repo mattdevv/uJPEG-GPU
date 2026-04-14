@@ -23,17 +23,20 @@ void CS_JPEG_Greyscale (uint3 id : SV_GroupThreadID, uint3 groupID : SV_GroupID)
     DecodeMCU_BW(id.x, mcuIndex, jpegInfo, _OutputTex);
 }
 
-[numthreads(32,1,1)]
+[numthreads(64,1,1)]
 void CS_JPEG_420 (uint3 id : SV_GroupThreadID, uint3 groupID : SV_GroupID)
 {
     JpegHeader jpegInfo = _jpegHeader[0];
+
+    uint warpID = id.x % 32;
+    uint mcuOffset = id.x / 32;
     
     // prevent decoding more MCUs than exist
-    uint mcuIndex = groupID.x + groupID.y * _dispatchWidth;
+    uint mcuIndex = (groupID.x + groupID.y * _dispatchWidth) * 2 + mcuOffset;
     if (mcuIndex >= jpegInfo.numMCUs)
         return;
 
-    DecodeMCU_420(id.x, mcuIndex, jpegInfo, _OutputTex);
+    DecodeMCU_420(warpID, mcuOffset, mcuIndex, jpegInfo, _OutputTex);
 }
 
 /*

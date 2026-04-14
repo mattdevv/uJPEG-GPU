@@ -378,7 +378,7 @@ public class JpegHelpers
             case JpegData.Format.BW:
                 return 1;
             case JpegData.Format.YUV420:
-                return 1; // 2 if you wish to use the faster compute kernel
+                return 2; // 2 if you wish to use the faster compute kernel
             case JpegData.Format.YUV444:
                 return 1;
             default:

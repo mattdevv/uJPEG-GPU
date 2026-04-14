@@ -9,7 +9,8 @@
 #define RGB_NORM (1. / 255.)
 
 ByteAddressBuffer _jpegData;
-groupshared int mcuBlockData[64];
+static uint _smemOffset;
+groupshared int mcuBlockData[128];
 
 uint DivRoundUp(uint dividend, uint divisor)
 {
@@ -74,6 +75,18 @@ void CUDAsubroutineInplaceIDCTvector(uint base, uint step)
     //const float C_norm = 0.3535533905932737f; // 1 / (8^0.5) 
     const float C_norm = 1; // skip normalizing and roll it into the de-quantization or the colorspace conversion
     
+    /*float4 s00 = asfloat(mcuBlockData[base / 4]);
+    float4 s01 = asfloat(mcuBlockData[base / 4 + 1]);
+    
+    float s0 = s00[0];
+    float s1 = s00[1];
+    float s2 = s00[2];
+    float s3 = s00[3];
+    float s4 = s01[0];
+    float s5 = s01[1];
+    float s6 = s01[2];
+    float s7 = s01[3];*/
+    
     float s0 = asfloat(mcuBlockData[base + step * 0]);
     float s1 = asfloat(mcuBlockData[base + step * 1]);
     float s2 = asfloat(mcuBlockData[base + step * 2]);
@@ -100,13 +113,13 @@ void CUDAsubroutineInplaceIDCTvector(uint base, uint step)
 	float Y1d7cP3a5fMM = C_d * s1 + C_c * s7 - C_a * s3 + C_f * s5;
 
 	mcuBlockData[base + step * 0] = asint(C_norm * (Y04P2b6ePP + Y7f1aP3c5dPP));
-	mcuBlockData[base + step * 7] = asint(C_norm * (Y04P2b6ePP - Y7f1aP3c5dPP));
-	mcuBlockData[base + step * 4] = asint(C_norm * (Y04P2b6ePM + Y7a1fM3d5cMP));
-	mcuBlockData[base + step * 3] = asint(C_norm * (Y04P2b6ePM - Y7a1fM3d5cMP));
 	mcuBlockData[base + step * 1] = asint(C_norm * (Y04M2e6bMP + Y1c7dM3f5aPM));
-	mcuBlockData[base + step * 5] = asint(C_norm * (Y04M2e6bMM - Y1d7cP3a5fMM));
 	mcuBlockData[base + step * 2] = asint(C_norm * (Y04M2e6bMM + Y1d7cP3a5fMM));
-	mcuBlockData[base + step * 6] = asint(C_norm * (Y04M2e6bMP - Y1c7dM3f5aPM));
+	mcuBlockData[base + step * 3] = asint(C_norm * (Y04P2b6ePM - Y7a1fM3d5cMP));
+    mcuBlockData[base + step * 4] = asint(C_norm * (Y04P2b6ePM + Y7a1fM3d5cMP));
+    mcuBlockData[base + step * 5] = asint(C_norm * (Y04M2e6bMM - Y1d7cP3a5fMM));
+    mcuBlockData[base + step * 6] = asint(C_norm * (Y04M2e6bMP - Y1c7dM3f5aPM));
+	mcuBlockData[base + step * 7] = asint(C_norm * (Y04P2b6ePP - Y7f1aP3c5dPP));
 }
 
 void idct8x8_optimized(uint lane)
@@ -114,9 +127,9 @@ void idct8x8_optimized(uint lane)
     if (lane < 8)
     {
         // IDCT: columns
-        CUDAsubroutineInplaceIDCTvector(lane, 8);
+        CUDAsubroutineInplaceIDCTvector(_smemOffset + lane, 8);
         // IDCT: rows
-        CUDAsubroutineInplaceIDCTvector(lane * 8, 1);
+        CUDAsubroutineInplaceIDCTvector(_smemOffset + lane * 8, 1);
     }
 }
 
@@ -201,22 +214,22 @@ void UndoZigZagQuantize(uint2 outputIndices, QuantizationTable quantTable)
     uint2 ZigZagIndex = uint2(ZigZagLUT[outputIndices.x], ZigZagLUT[outputIndices.y]);
     int2 quants = asint(uint2(quantTable.GetAt(outputIndices.x), quantTable.GetAt(outputIndices.y)));
     
-    uint A = asuint(mcuBlockData[ZigZagIndex.x] * quants.x);
-    uint B = asuint(mcuBlockData[ZigZagIndex.y] * quants.y);
+    uint A = asuint(mcuBlockData[_smemOffset + ZigZagIndex.x] * quants.x);
+    uint B = asuint(mcuBlockData[_smemOffset + ZigZagIndex.y] * quants.y);
 
-    mcuBlockData[outputIndices.x] = asint((float)asint(A));
-    mcuBlockData[outputIndices.y] = asint((float)asint(B));
+    mcuBlockData[_smemOffset + outputIndices.x] = asint((float)asint(A));
+    mcuBlockData[_smemOffset + outputIndices.y] = asint((float)asint(B));
 }
 
 void UndoZigZagQuantize(uint warpID, int2 quants, uint2 ZigZagIndex)
 {
     uint2 outputIndices = uint2(warpID, warpID + 32); // this processing order allows starting IDCT without group sync
     
-    int A = mcuBlockData[ZigZagIndex.x] * quants.x;
-    int B = mcuBlockData[ZigZagIndex.y] * quants.y;
+    int A = mcuBlockData[_smemOffset + ZigZagIndex.x] * quants.x;
+    int B = mcuBlockData[_smemOffset + ZigZagIndex.y] * quants.y;
 
-    mcuBlockData[outputIndices.x] = asint((float)A);
-    mcuBlockData[outputIndices.y] = asint((float)B);
+    mcuBlockData[_smemOffset + outputIndices.x] = asint((float)A);
+    mcuBlockData[_smemOffset + outputIndices.y] = asint((float)B);
 
 }
 
@@ -224,12 +237,11 @@ void UndoZigZagQuantize(uint warpID, float2 quants, uint2 ZigZagIndex)
 {
     uint2 outputIndices = uint2(warpID, warpID + 32); // this processing order allows starting IDCT without group sync
 
-    float A = (float)mcuBlockData[ZigZagIndex.x];
-    float B = (float)mcuBlockData[ZigZagIndex.y];
+    float A = (float)mcuBlockData[_smemOffset + ZigZagIndex.x];
+    float B = (float)mcuBlockData[_smemOffset + ZigZagIndex.y];
     
-    mcuBlockData[outputIndices.x] = asint(A * quants.x);
-    mcuBlockData[outputIndices.y] = asint(B * quants.y);
-
+    mcuBlockData[_smemOffset + outputIndices.x] = asint(A * quants.x);
+    mcuBlockData[_smemOffset + outputIndices.y] = asint(B * quants.y);
 }
 
 // calculates and loads the offset to start reading an MCU at
@@ -323,8 +335,8 @@ void ReadBlockFromStream(uint warpID, inout BitStream stream, HuffmanTableDC tab
 {
     // reset groupshared memory
     // this pattern fixes some groupsync issues in YUV444
-    mcuBlockData[warpID * 2 + 0] = 0;
-    mcuBlockData[warpID * 2 + 1] = 0;
+    mcuBlockData[_smemOffset + warpID * 2 + 0] = 0;
+    mcuBlockData[_smemOffset + warpID * 2 + 1] = 0;
 
     // decode the DC values
     {
@@ -342,7 +354,7 @@ void ReadBlockFromStream(uint warpID, inout BitStream stream, HuffmanTableDC tab
 
         // only 1 thread needs to write this value
         if (warpID == 0)
-            mcuBlockData[0] = lastDC;
+            mcuBlockData[_smemOffset + 0] = lastDC;
     }
 
     // decode the AC values
@@ -370,7 +382,7 @@ void ReadBlockFromStream(uint warpID, inout BitStream stream, HuffmanTableDC tab
         
         // only 1 thread needs to write this value
         if (warpID == 0)
-            mcuBlockData[i] = valueAC;
+            mcuBlockData[_smemOffset + i] = valueAC;
     }
 }
 
@@ -392,7 +404,7 @@ void DecodeMCU_444(uint warpID, uint mcuIndex, JpegHeader jpegInfo, RWTexture2D<
     ReadBlockFromStream(warpID, stream, jpegInfo.dcHuffmanTable, jpegInfo.acHuffmanTable, lastDC_Y);
     UndoZigZagQuantize(warpID, quants, ZigZagIndex);
     idct8x8_optimized(warpID);
-    colorCache.xz = asfloat(int2(mcuBlockData[outputIndices.x], mcuBlockData[outputIndices.y]));
+    colorCache.xz = asfloat(int2(mcuBlockData[_smemOffset + outputIndices.x], mcuBlockData[_smemOffset + outputIndices.y]));
 
     // switch to chroma quants
     quants = asint(uint2(jpegInfo.chromaQuant.GetAt(warpID), jpegInfo.chromaQuant.GetAt(warpID + 32)));
@@ -402,7 +414,7 @@ void DecodeMCU_444(uint warpID, uint mcuIndex, JpegHeader jpegInfo, RWTexture2D<
     ReadBlockFromStream(warpID, stream, jpegInfo.dcHuffmanTable, jpegInfo.acHuffmanTable, lastDC_cB);
     UndoZigZagQuantize(warpID, quants, ZigZagIndex);
     idct8x8_optimized(warpID);
-    colorCache.yw = asfloat(int2(mcuBlockData[outputIndices.x], mcuBlockData[outputIndices.y]));
+    colorCache.yw = asfloat(int2(mcuBlockData[_smemOffset + outputIndices.x], mcuBlockData[_smemOffset + outputIndices.y]));
     
     // decode chroma red
     int lastDC_cR = 0;
@@ -420,12 +432,12 @@ void DecodeMCU_444(uint warpID, uint mcuIndex, JpegHeader jpegInfo, RWTexture2D<
     uint4 outputCoord = (uint2(mcuX, mcuY) * 8).xyxy + blockCoord;
     
     // first pixel
-    float3 result = float3(colorCache.xy, asfloat(mcuBlockData[outputIndices.x]));
+    float3 result = float3(colorCache.xy, asfloat(mcuBlockData[_smemOffset + outputIndices.x]));
     if (all(outputCoord.xy < resolution))
         output[outputCoord.xy] = float4(YCbCrToRgb_LvlShift(result * IDCT_NORM), 1);
 
     // second pixel
-    result = float3(colorCache.zw, asfloat(mcuBlockData[outputIndices.y]));
+    result = float3(colorCache.zw, asfloat(mcuBlockData[_smemOffset + outputIndices.y]));
     if (all(outputCoord.zw < resolution))
         output[outputCoord.zw] = float4(YCbCrToRgb_LvlShift(result * IDCT_NORM), 1);
 }
@@ -440,8 +452,10 @@ uint MapSequenceIndex(uint blockIndex, uint quadrant)
     return ((quadrant & 2u) << 3u) | ((quadrant & 1u) << 1u) | ((blockIndex & 0x34u) >> 2u);
 }
 
-void DecodeMCU_420(uint warpID, uint mcuIndex, JpegHeader jpegInfo, RWTexture2D<float4> output)
-{    
+void DecodeMCU_420(uint warpID, uint mcuOffset, uint mcuIndex, JpegHeader jpegInfo, RWTexture2D<float4> output)
+{
+    _smemOffset = mcuOffset * 64;
+    
     uint bitOffset = GetBitOffsetMCU(mcuIndex);
     BitStream stream;
     stream.Setup(_jpegData, bitOffset);
@@ -463,12 +477,12 @@ void DecodeMCU_420(uint warpID, uint mcuIndex, JpegHeader jpegInfo, RWTexture2D<
     ReadBlockFromStream(warpID, stream, jpegInfo.dcHuffmanTable, jpegInfo.acHuffmanTable, lastDC_cB);
     UndoZigZagQuantize(warpID, chromaQuants, ZigZagIndex);
     idct8x8_optimized(warpID);
-    chromaCbCr.xz = asfloat(int2(mcuBlockData[outputIndices.x], mcuBlockData[outputIndices.y]));
+    chromaCbCr.xz = asfloat(int2(mcuBlockData[_smemOffset + outputIndices.x], mcuBlockData[_smemOffset + outputIndices.y]));
     // decode chroma red
     ReadBlockFromStream(warpID, stream, jpegInfo.dcHuffmanTable, jpegInfo.acHuffmanTable, lastDC_cR);    
     UndoZigZagQuantize(warpID, chromaQuants, ZigZagIndex);
     idct8x8_optimized(warpID);
-    chromaCbCr.yw = asfloat(int2(mcuBlockData[outputIndices.x], mcuBlockData[outputIndices.y]));
+    chromaCbCr.yw = asfloat(int2(mcuBlockData[_smemOffset + outputIndices.x], mcuBlockData[_smemOffset + outputIndices.y]));
 
     // switch to luma quants
     float2 lumaQuants = float2(asint(jpegInfo.luminanceQuant.GetAt(warpID)), asint(jpegInfo.luminanceQuant.GetAt(warpID + 32))) * (IDCT_NORM * RGB_NORM);
@@ -507,14 +521,14 @@ void DecodeMCU_420(uint warpID, uint mcuIndex, JpegHeader jpegInfo, RWTexture2D<
         float3 rgb = float3(r, g, b);
         
         // first pixel
-        float Y = asfloat(mcuBlockData[outputIndices.x]) + (128 * RGB_NORM);
+        float Y = asfloat(mcuBlockData[_smemOffset + outputIndices.x]) + (128 * RGB_NORM);
         if (all(blockCoord.xy < resolution))
         {
             output[blockCoord.xy] = float4(Y + rgb, 1);
         }
         
         // second pixel
-        Y = asfloat(mcuBlockData[outputIndices.y]) + (128 * RGB_NORM);
+        Y = asfloat(mcuBlockData[_smemOffset + outputIndices.y]) + (128 * RGB_NORM);
         if (all(blockCoord.xy + uint2(1, 0) < resolution))
         {
             output[blockCoord.xy + uint2(1, 0)] = float4(Y + rgb, 1);
@@ -549,7 +563,7 @@ void DecodeMCU_BW(uint warpID, uint mcuIndex, JpegHeader jpegInfo, RWTexture2D<f
     idct8x8_optimized(warpID);
 
     // level shift and scale to (0-1) range
-    float2 luminances = asfloat(int2(mcuBlockData[outputIndices.x], mcuBlockData[outputIndices.y]));
+    float2 luminances = asfloat(int2(mcuBlockData[_smemOffset + outputIndices.x], mcuBlockData[_smemOffset + outputIndices.y]));
     luminances = luminances * (IDCT_NORM * RGB_NORM).xx + (128 * RGB_NORM).xx;
     
     // figure out output coord on texture
