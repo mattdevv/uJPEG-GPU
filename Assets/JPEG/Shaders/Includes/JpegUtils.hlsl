@@ -100,13 +100,13 @@ void CUDAsubroutineInplaceIDCTvector(uint base, uint step)
 	float Y1d7cP3a5fMM = C_d * s1 + C_c * s7 - C_a * s3 + C_f * s5;
 
 	mcuBlockData[base + step * 0] = asint(C_norm * (Y04P2b6ePP + Y7f1aP3c5dPP));
-	mcuBlockData[base + step * 7] = asint(C_norm * (Y04P2b6ePP - Y7f1aP3c5dPP));
-	mcuBlockData[base + step * 4] = asint(C_norm * (Y04P2b6ePM + Y7a1fM3d5cMP));
-	mcuBlockData[base + step * 3] = asint(C_norm * (Y04P2b6ePM - Y7a1fM3d5cMP));
 	mcuBlockData[base + step * 1] = asint(C_norm * (Y04M2e6bMP + Y1c7dM3f5aPM));
-	mcuBlockData[base + step * 5] = asint(C_norm * (Y04M2e6bMM - Y1d7cP3a5fMM));
 	mcuBlockData[base + step * 2] = asint(C_norm * (Y04M2e6bMM + Y1d7cP3a5fMM));
-	mcuBlockData[base + step * 6] = asint(C_norm * (Y04M2e6bMP - Y1c7dM3f5aPM));
+	mcuBlockData[base + step * 3] = asint(C_norm * (Y04P2b6ePM - Y7a1fM3d5cMP));
+    mcuBlockData[base + step * 4] = asint(C_norm * (Y04P2b6ePM + Y7a1fM3d5cMP));
+    mcuBlockData[base + step * 5] = asint(C_norm * (Y04M2e6bMM - Y1d7cP3a5fMM));
+    mcuBlockData[base + step * 6] = asint(C_norm * (Y04M2e6bMP - Y1c7dM3f5aPM));
+	mcuBlockData[base + step * 7] = asint(C_norm * (Y04P2b6ePP - Y7f1aP3c5dPP));
 }
 
 void idct8x8_optimized(uint lane)
